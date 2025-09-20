@@ -13,7 +13,7 @@ import (
 const AppName = "epgo"
 
 // Version : Version
-const Version = "3.0.5"
+const Version = "v3.2.1"
 
 // Config : Config file (struct)
 var Config config
