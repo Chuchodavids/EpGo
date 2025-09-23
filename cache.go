@@ -307,18 +307,11 @@ func (c *cache) GetIcon(id string) (i []Icon) {
 				continue // Skip aspect ratios we don't care about
 			}
 
-			// A lower score is better. We can combine scores to rank images.
-			// Prioritize category, then aspect ratio.
 			currentScore := catScore*10 + aspectScore
 
 			if bestScore == -1 || currentScore < bestScore || (currentScore == bestScore && iconData.Width > bestIcon.Width) {
-				// This is a better icon if:
-				// 1. It's the first valid one we've found.
-				// 2. Its score is better (lower) than the current best.
-				// 3. It has the same score but is a larger image.
 				bestScore = currentScore
-				
-				// Ensure URI is a full URL
+
 				uri := iconData.URI
 				if uri[0:7] != "http://" && uri[0:8] != "https://" {
 					uri = fmt.Sprintf("https://json.schedulesdirect.org/20141201/image/%s?token=%s", uri, Token)
@@ -348,7 +341,6 @@ func (c *cache) Open() (err error) {
 		return nil
 	}
 
-	// Open config file and convert Yaml to Struct (config)
 	err = json.Unmarshal(data, &c)
 	if err != nil {
 		return
@@ -572,7 +564,6 @@ func (c *cache) GetEpisodeNum(id string) (ep []EpisodeNum) {
 
 				episodeNum.Value = fmt.Sprintf("%d.%d.", seaseon-1, episode-1)
 				episodeNum.System = "xmltv_ns"
-
 				ep = append(ep, episodeNum)
 			}
 
@@ -587,6 +578,7 @@ func (c *cache) GetEpisodeNum(id string) (ep []EpisodeNum) {
 
 		}
 
+		// ✅ Fixed dd_progid formatting
 		if len(ep) == 0 {
 
 			var episodeNum EpisodeNum
@@ -594,7 +586,12 @@ func (c *cache) GetEpisodeNum(id string) (ep []EpisodeNum) {
 			switch id[0:2] {
 
 			case "EP":
-				episodeNum.Value = id + "." + id
+				// Correct format: keep prefix, add dot + episode part if present
+				if len(id) > 10 {
+					episodeNum.Value = fmt.Sprintf("%s.%s", id[:10], id[10:])
+				} else {
+					episodeNum.Value = id + ".0000"
+				}
 
 			case "SH", "MV":
 				episodeNum.Value = id + ".0000"
@@ -604,7 +601,6 @@ func (c *cache) GetEpisodeNum(id string) (ep []EpisodeNum) {
 			}
 
 			episodeNum.System = "dd_progid"
-
 			ep = append(ep, episodeNum)
 
 		}
@@ -743,7 +739,7 @@ func downloadImage(imageURL, programID string) (string, error) {
 
 	out, err := os.Create(filePath)
 	if err != nil {
-		return "", fmt.Errorf("failed to create image file: %w", err)
+		return "", fmt.Errorf("failed to create file: %w", err)
 	}
 	defer out.Close()
 
@@ -753,5 +749,4 @@ func downloadImage(imageURL, programID string) (string, error) {
 	}
 
 	return filePath, nil
-
 }
