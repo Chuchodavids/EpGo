@@ -11,9 +11,23 @@ import (
 )
 
 const (
-	tmdbURL      = "https://api.themoviedb.org/3/%s"
-	tmdbImageUrl = "https://image.tmdb.org/t/p/w94_and_h141_bestv2%s"
+	tmdbURL           = "https://api.themoviedb.org/3/%s"
+	tmdbImageBase     = "https://image.tmdb.org/t/p"
+	defaultPosterSize = "w500" // sharper default for Plex posters
 )
+
+// posterURL builds a full TMDb image URL from a path and size.
+// If size is empty, defaultPosterSize is used.
+func posterURL(path, size string) string {
+	if path == "" {
+		return ""
+	}
+	if size == "" {
+		size = defaultPosterSize
+	}
+	path = strings.TrimPrefix(path, "/")
+	return fmt.Sprintf("%s/%s/%s", tmdbImageBase, size, path)
+}
 
 type Results struct {
 	TmdbResults []TmdbResults `json:"results"`
@@ -84,104 +98,92 @@ type ShowDetails struct {
 	VoteCount   int    `json:"vote_count"`
 }
 
-
 // https://api.themoviedb.org/3/search/multi?query=two%20towers&include_adult=false&language=en-US&page=1
 func SearchItem(logger *slog.Logger, searchTerm, mediaType, tmdbApiKey, imageCacheFile string) (string, error) {
-	// 1. Check the cache FIRST
-	var tmdbUrl string
+	// 1) Clean search term
 	searchTerm = strings.ReplaceAll(searchTerm, "ᴺᵉʷ", "")
 	searchTerm = strings.ReplaceAll(searchTerm, "ᴸᶦᵛᵉ", "")
 	searchTerm = strings.TrimSpace(searchTerm)
 
-	// 2. If not in cache, make the TMDB request
+	// 2) Endpoint by media type
+	var tmdbUrl string
 	switch mediaType {
-	case "SH":
-		tmdbUrl = fmt.Sprintf(tmdbURL, "search/tv")
-		mediaType = "SH"
-	case "EP":
+	case "SH", "EP":
 		tmdbUrl = fmt.Sprintf(tmdbURL, "search/tv")
 		mediaType = "SH"
 	case "MV":
 		tmdbUrl = fmt.Sprintf(tmdbURL, "search/movie")
 		mediaType = "MV"
-	default: // Handle default/multi search case
+	default:
 		tmdbUrl = fmt.Sprintf(tmdbURL, "search/multi")
 		mediaType = "default"
 	}
 
-	cachedURL, err := getImageURL(searchTerm + "-" + mediaType, imageCacheFile) // Include media type in cache key
-	if err != nil {
-		return "", fmt.Errorf("error checking cache: %w", err) // Handle cache read errors
+	// 3) Cache hit?
+	if cachedPath, err := getImageURL(searchTerm+"-"+mediaType, imageCacheFile); err != nil {
+		return "", fmt.Errorf("error checking cache: %w", err)
+	} else if cachedPath != "" {
+		return posterURL(cachedPath, ""), nil // default w500
 	}
 
-	if cachedURL != "" {
-		return fmt.Sprintf(tmdbImageUrl, cachedURL), nil // Return cached URL if found
-	}
-
+	// 4) Remote request
 	token := "Bearer " + tmdbApiKey
-
-	req, err := http.NewRequest(http.MethodGet, tmdbUrl, nil) // Check for request creation errors
+	req, err := http.NewRequest(http.MethodGet, tmdbUrl, nil)
 	if err != nil {
 		return "", fmt.Errorf("error creating request: %w", err)
 	}
-
 	q := req.URL.Query()
 	q.Add("query", searchTerm)
 	q.Add("language", "en")
 	q.Add("page", "1")
-
+	req.URL.RawQuery = q.Encode()
 	req.Header.Set("Authorization", token)
 	req.Header.Set("accept", "application/json")
-	req.URL.RawQuery = q.Encode()
 
-	client := &http.Client{}
-
-	resp, err := client.Do(req)
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("tmdb response was non-200: %v", resp.Status)
-	}
+	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("error making TMDB request: %w", err)
 	}
 	defer resp.Body.Close()
-
-
-	var r Results
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil { // Check decode errors
-		return "", fmt.Errorf("error decoding TMDB response: %w", err)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("tmdb response was non-200: %v", resp.Status)
 	}
 
+	var r Results
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return "", fmt.Errorf("error decoding TMDB response: %w", err)
+	}
 	if len(r.TmdbResults) == 0 {
 		return "", nil
 	}
 
 	posterPath := r.TmdbResults[0].PosterPath
 	if posterPath == "" {
-		return posterPath, nil
-	}
-	// 3. Add to cache AFTER successful TMDB request
-	err = addImageToCache(searchTerm+"-"+mediaType, posterPath, imageCacheFile) // Use combined key
-	if err != nil {
-		logger.Error("error adding to cache", "error", err) // Log the error, but don't stop execution
+		return "", nil
 	}
 
-	return fmt.Sprintf(tmdbImageUrl, posterPath), nil
+	// 5) Cache the *path* (not full URL)
+	if err := addImageToCache(searchTerm+"-"+mediaType, posterPath, imageCacheFile); err != nil {
+		logger.Error("error adding to cache", "error", err)
+	}
+
+	// 6) Return full URL with default w500 size
+	return posterURL(posterPath, ""), nil
 }
 
 func getImageURL(name, cacheFile string) (string, error) {
-	imageCacheFile, err := os.Open(cacheFile) // Only open for reading
+	f, err := os.Open(cacheFile)
 	if err != nil {
-		if os.IsNotExist(err) { // Handle file not found gracefully.
-			return "", nil // Treat as not found, no error
+		if os.IsNotExist(err) {
+			return "", nil
 		}
 		return "", fmt.Errorf("error opening image cache file: %w", err)
 	}
-	defer imageCacheFile.Close()
+	defer f.Close()
 
 	var cache []map[string]string
-	decoder := json.NewDecoder(imageCacheFile)
-
-	if err := decoder.Decode(&cache); err != nil {
+	dec := json.NewDecoder(f)
+	if err := dec.Decode(&cache); err != nil {
 		if err != io.EOF {
 			return "", fmt.Errorf("error decoding JSON: %w", err)
 		}
@@ -192,8 +194,7 @@ func getImageURL(name, cacheFile string) (string, error) {
 			return entry["url"], nil
 		}
 	}
-
-	return "", nil // Not found
+	return "", nil
 }
 
 func addImageToCache(name, url, cacheFile string) error {
@@ -202,45 +203,37 @@ func addImageToCache(name, url, cacheFile string) error {
 		"url":  url,
 	}
 
-	imageCacheFile, err := os.OpenFile(cacheFile, os.O_RDWR|os.O_CREATE, 0644)
+	f, err := os.OpenFile(cacheFile, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return fmt.Errorf("error opening image cache file: %w", err)
 	}
-	defer imageCacheFile.Close()
+	defer f.Close()
 
 	var cache []map[string]string
-
-	decoder := json.NewDecoder(imageCacheFile)
-
-	if err := decoder.Decode(&cache); err != nil {
-		if err != io.EOF {
-			return fmt.Errorf("error decoding JSON: %w", err)
-		}
+	dec := json.NewDecoder(f)
+	if err := dec.Decode(&cache); err != nil && err != io.EOF {
+		return fmt.Errorf("error decoding JSON: %w", err)
 	}
 
-	// Check if the entry already exists (optional, but good practice).
-	for _, existingEntry := range cache {
-		if existingEntry["name"] == name && existingEntry["url"] == url {
-			return nil // Already exists, no need to add.
+	// Avoid duplicates
+	for _, e := range cache {
+		if e["name"] == name && e["url"] == url {
+			return nil
 		}
 	}
-
 	cache = append(cache, entry)
 
-	// Seek to the beginning of the file to overwrite
-	if _, err := imageCacheFile.Seek(0, io.SeekStart); err != nil {
+	// Seek to start & truncate to avoid trailing bytes from previous content
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("error seeking to beginning of file: %w", err)
 	}
-
-	// Truncate the file to remove any old content.
-	if err := imageCacheFile.Truncate(0); err != nil {
+	if err := f.Truncate(0); err != nil {
 		return fmt.Errorf("error truncating file: %w", err)
 	}
 
-	encoder := json.NewEncoder(imageCacheFile)
-	if err := encoder.Encode(cache); err != nil {
+	enc := json.NewEncoder(f)
+	if err := enc.Encode(cache); err != nil {
 		return fmt.Errorf("error encoding JSON: %w", err)
 	}
-
 	return nil
 }
