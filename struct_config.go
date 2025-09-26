@@ -29,6 +29,7 @@ type config struct {
 		Images                  struct {
 			Download bool   `yaml:"Download Images from Schedules Direct"`
 			Path     string `yaml:"Image Path"`
+			PosterAspect string `yaml:"Poster Aspect"` // all | 2x3 | 4x3 | 16x9
 			Tmdb     struct {
 				Enable bool   `yaml:"Enable"`
 				ApiKey string `yaml:"Api Key"`
