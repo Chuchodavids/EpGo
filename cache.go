@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -276,56 +277,57 @@ func (c *cache) GetRequiredMetaIDs() (metaIDs []string) {
 func (c *cache) GetIcon(id string) (i []Icon) {
 
 	if m, ok := c.Metadata[id]; ok {
-		// Define preferences for categories and aspect ratios. Lower index = higher preference.
+		// 1) Filter by configured SD aspect string ("16x9", "2x3", "4x3", ...). "all" or empty = no filter.
+		desired := strings.TrimSpace(Config.Options.Images.PosterAspect)
+		candidates := make([]Data, 0, len(m.Data))
+		for _, d := range m.Data {
+			if desired == "" || strings.EqualFold(desired, "all") || strings.EqualFold(d.Aspect, desired) {
+				candidates = append(candidates, d)
+			}
+		}
+		if len(candidates) == 0 {
+			// No exact aspect match → fall back to whatever SD has for this item
+			candidates = m.Data
+		}
+
+		// 2) Prefer poster-ish categories; tie-break by larger width
 		categoryPrefs := map[string]int{
-			"Poster Art":  0,
-			"Box Art":     1,
-			"Banner-L1":   2,
-			"Banner-L2":   3,
-			"VOD Art":     4, // Fallback category
-		}
-		aspectPrefs := map[string]int{
-			"16x9": 0,
-			"2x3":  1,
-			"4x3":  2,
-			"3x4":  3,
-			"2x1":  4,
-			"1x1":  5,
+			"Poster Art": 0,
+			"Box Art":    1,
+			"Banner-L1":  2,
+			"Banner-L2":  3,
+			"VOD Art":    4,
 		}
 
-		var bestIcon *Icon
-		bestScore := -1
-
-		for _, iconData := range m.Data {
-			catScore, catOK := categoryPrefs[iconData.Category]
-			if !catOK {
-				continue // Skip categories we don't care about
+		var chosen Data
+		bestScore := 1 << 30
+		for _, d := range candidates {
+			catScore, ok := categoryPrefs[d.Category]
+			if !ok {
+				continue
 			}
-
-			aspectScore, aspectOK := aspectPrefs[iconData.Aspect]
-			if !aspectOK {
-				continue // Skip aspect ratios we don't care about
-			}
-
-			currentScore := catScore*10 + aspectScore
-
-			if bestScore == -1 || currentScore < bestScore || (currentScore == bestScore && iconData.Width > bestIcon.Width) {
-				bestScore = currentScore
-
-				uri := iconData.URI
-				if uri[0:7] != "http://" && uri[0:8] != "https://" {
-					uri = fmt.Sprintf("https://json.schedulesdirect.org/20141201/image/%s?token=%s", uri, Token)
-				}
-
-				bestIcon = &Icon{Src: uri, Height: iconData.Height, Width: iconData.Width}
+			// lower is better; prefer larger width on ties
+			score := catScore*1000 - d.Width
+			if score < bestScore {
+				bestScore = score
+				chosen = d
 			}
 		}
+		if chosen.URI == "" && len(candidates) > 0 {
+			chosen = candidates[0] // absolute fallback
+		}
 
-		if bestIcon != nil {
+		if chosen.URI != "" {
+			uri := chosen.URI
+			if !strings.HasPrefix(uri, "http://") && !strings.HasPrefix(uri, "https://") {
+				uri = fmt.Sprintf("https://json.schedulesdirect.org/20141201/image/%s?token=%s", uri, Token)
+			}
+			out := Icon{Src: uri, Height: chosen.Height, Width: chosen.Width}
+
 			if Config.Options.Images.Download {
-				downloadImage(bestIcon.Src, id)
+				downloadImage(out.Src, id)
 			}
-			i = append(i, *bestIcon)
+			i = append(i, out)
 		}
 	}
 	return
