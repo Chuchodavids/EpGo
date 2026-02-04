@@ -11,6 +11,9 @@ type cache struct {
 	Metadata map[string]EPGoCache   `json:"Metadata"`
 	Schedule map[string][]EPGoCache `json:"Schedule"`
 
+	Token        string `json:"Token,omitempty"`
+	TokenExpires int64  `json:"TokenExpires,omitempty"`
+
 	sync.RWMutex `json:"-"`
 }
 

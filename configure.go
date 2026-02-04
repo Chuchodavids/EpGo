@@ -29,8 +29,11 @@ func Configure(filename string) (err error) {
 		return err
 	}
 
+	Cache.Open()
+
 	if len(Config.Account.Username) != 0 || len(Config.Account.Password) != 0 {
 		sd.Login()
+		Cache.Save()
 		sd.Status()
 	}
 
@@ -57,6 +60,7 @@ func Configure(filename string) (err error) {
 				os.RemoveAll(Config.File + ".yaml")
 				os.Exit(0)
 			}
+			Cache.Save()
 			sd.Status()
 
 		}
@@ -93,7 +97,10 @@ func Configure(filename string) (err error) {
 
 		case 1:
 			entry.account()
+			Cache.Token = ""
+			Cache.TokenExpires = 0
 			sd.Login()
+			Cache.Save()
 			sd.Status()
 
 		case 2:

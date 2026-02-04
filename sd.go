@@ -11,13 +11,25 @@ import (
 
 var Token string
 
+const tokensafeMargin = 5 * time.Minute
+
 // Init : Init Schedules Direct
 func (sd *SD) Init() (err error) {
-
 	sd.BaseURL = "https://json.schedulesdirect.org/20141201/"
 
 	// Funtion to get token
 	sd.Login = func() (err error) {
+		if Cache.Token != "" && Cache.TokenExpires > 0 {
+			expiresAt := time.Unix(Cache.TokenExpires, 0)
+			safetyMargin := time.Now().Add(tokensafeMargin)
+			if expiresAt.After(safetyMargin) {
+				logger.Info("Using cached token", "expires", expiresAt)
+				sd.Token = Cache.Token
+				Token = Cache.Token
+				return nil
+			}
+			logger.Info("Cached token expired or expiring soon, requesting new token")
+		}
 
 		sd.Req.URL = sd.BaseURL + "token"
 		sd.Req.Type = "POST"
@@ -43,12 +55,15 @@ func (sd *SD) Init() (err error) {
 
 		sd.Token = sd.Resp.Login.Token
 		Token = sd.Token
+
+		Cache.Token = sd.Token
+		Cache.TokenExpires = sd.Resp.Login.TokenExpires
+
 		return
 	}
 
 	// Status function to check status of schedules direct API
 	sd.Status = func() (err error) {
-
 		fmt.Println()
 
 		sd.Req.URL = sd.BaseURL + "status"

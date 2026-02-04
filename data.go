@@ -33,9 +33,22 @@ func (sd *SD) Update(filename string) (err error) {
 	if err != nil {
 		return err
 	}
-	err = sd.Login()
-	if err !=nil {
+
+	// load cache before login to check for cached token
+	err = Cache.Open()
+	if err != nil {
+		logger.Error("unable to open the cache", "error", err)
 		return err
+	}
+
+	err = sd.Login()
+	if err != nil {
+		return err
+	}
+
+	err = Cache.Save()
+	if err != nil {
+		logger.Warn("unable to save token to cache", "error", err)
 	}
 
 	err = sd.Status()
