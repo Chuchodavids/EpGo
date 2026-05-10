@@ -76,6 +76,7 @@ func CreateXMLTV(filename string) (err error) {
 		xmlCha.Icon = cache.getLogo()
 		xmlCha.DisplayName = append(xmlCha.DisplayName, DisplayName{Value: cache.Callsign})
 		xmlCha.DisplayName = append(xmlCha.DisplayName, DisplayName{Value: cache.Name})
+		xmlCha.Lcn = cache.Lcn
 
 		he(enc.Encode(xmlCha))
 

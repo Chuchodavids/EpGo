@@ -57,6 +57,15 @@ func (c *cache) AddStations(data *[]byte, lineup string) {
 
 	var channelIDs = Config.GetChannelList(lineup)
 
+	lcnMap := make(map[string]string)
+	for _, m := range sdData.Map {
+		if m.AtscMajor > 0 {
+			lcnMap[m.StationID] = fmt.Sprintf("%d.%d", m.AtscMajor, m.AtscMinor)
+		} else if m.Channel != "" {
+			lcnMap[m.StationID] = m.Channel
+		}
+	}
+
 	for _, sd := range sdData.Stations {
 
 		if ContainsString(channelIDs, sd.StationID) != -1 {
@@ -67,6 +76,7 @@ func (c *cache) AddStations(data *[]byte, lineup string) {
 			epgoCache.Affiliate = sd.Affiliate
 			epgoCache.BroadcastLanguage = sd.BroadcastLanguage
 			epgoCache.Logo = sd.Logo
+			epgoCache.Lcn = lcnMap[sd.StationID]
 
 			c.Channel[sd.StationID] = epgoCache
 

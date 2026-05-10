@@ -26,6 +26,7 @@ type EPGoCache struct {
 	Name              string   `json:"name,omitempty"`
 	Callsign          string   `json:"callsign,omitempty"`
 	Affiliate         string   `json:"affiliate,omitempty"`
+	Lcn               string   `json:"lcn,omitempty"`
 	BroadcastLanguage []string `json:"broadcastLanguage"`
 	StationLogo       []struct {
 		URL    string `json:"URL"`

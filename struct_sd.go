@@ -255,6 +255,8 @@ type SDStation struct {
 	Map []struct {
 		Channel   string `json:"channel"`
 		StationID string `json:"stationID"`
+		AtscMajor int    `json:"atscMajor,omitempty"`
+		AtscMinor int    `json:"atscMinor,omitempty"`
 	} `json:"map"`
 	Metadata struct {
 		Lineup    string `json:"lineup"`
