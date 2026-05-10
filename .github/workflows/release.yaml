@@ -22,10 +22,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go }}
 
@@ -33,23 +33,23 @@ jobs:
         id: set_names
         run: |
           if [ "${{ matrix.os_arch.goos }}" == "windows" ]; then
-            echo "binary_name=epgo_${{ matrix.os_arch.goos }}_${{ matrix.os_arch.goarch }}.exe" >> $GITHUB_ENV
-            echo "archive_name=epgo_${{ matrix.os_arch.goos }}_${{ matrix.os_arch.goarch }}.zip" >> $GITHUB_ENV
+            echo "binary_name=epgo_${{ matrix.os_arch.goos }}_${{ matrix.os_arch.goarch }}.exe" >> $GITHUB_OUTPUT
+            echo "archive_name=epgo_${{ matrix.os_arch.goos }}_${{ matrix.os_arch.goarch }}.zip" >> $GITHUB_OUTPUT
           else
-            echo "binary_name=epgo_${{ matrix.os_arch.goos }}_${{ matrix.os_arch.goarch }}" >> $GITHUB_ENV
-            echo "archive_name=epgo_${{ matrix.os_arch.goos }}_${{ matrix.os_arch.goarch }}.tar.gz" >> $GITHUB_ENV
+            echo "binary_name=epgo_${{ matrix.os_arch.goos }}_${{ matrix.os_arch.goarch }}" >> $GITHUB_OUTPUT
+            echo "archive_name=epgo_${{ matrix.os_arch.goos }}_${{ matrix.os_arch.goarch }}.tar.gz" >> $GITHUB_OUTPUT
           fi
 
       - name: Build project
         run: |
-          GOOS=${{ matrix.os_arch.goos }} GOARCH=${{ matrix.os_arch.goarch }} go build -ldflags="-s -w" -o ${{ env.binary_name }}
+          GOOS=${{ matrix.os_arch.goos }} GOARCH=${{ matrix.os_arch.goarch }} go build -ldflags="-s -w" -o ${{ steps.set_names.outputs.binary_name }}
 
       - name: Archive binary
         run: |
           if [ "${{ matrix.os_arch.goos }}" == "windows" ]; then
-            zip ${{ env.archive_name }} ${{ env.binary_name }}
+            zip ${{ steps.set_names.outputs.archive_name }} ${{ steps.set_names.outputs.binary_name }}
           else
-            tar -czvf ${{ env.archive_name }} ${{ env.binary_name }}
+            tar -czvf ${{ steps.set_names.outputs.archive_name }} ${{ steps.set_names.outputs.binary_name }}
           fi
       - name: Upload artifact for ${{ matrix.os_arch.goos }}-${{ matrix.os_arch.goarch }}
         uses: actions/upload-artifact@v4
@@ -62,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -71,7 +71,7 @@ jobs:
 
       - name: Check for existing release
         id: check_release
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
