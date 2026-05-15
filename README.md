@@ -12,49 +12,66 @@ subredit: [epgo](https://www.reddit.com/r/EpGo/)
 
 - [Schedules Direct](https://www.schedulesdirect.org/ "Schedules Direct") Account
 - Computer with 1-2 GB memory
-- [Go](https://golang.org/ "Golang") to build the binary
-- [Optional] Docker to run it in a dockerize environment
+- [Go](https://golang.org/ "Golang") 1.21+ to build the binary
+- [Optional] Docker to run it in a containerized environment
 
 ## Installation
 
 ### Option 1 -- Build Binary
 
-The following command must be executed with the terminal / command prompt inside the source code folder.  
+Run the following commands inside the source code folder:
 
 ```bash
 go mod tidy
 go build epgo
 ```
 
-This will spit out a binary for your OS named `epgo`
+This produces a binary named `epgo` for your OS.
+
+For a smaller production binary:
+
+```bash
+go build -ldflags="-s -w" -o epgo
+```
+
+To cross-compile (e.g., for Linux on AMD64):
+
+```bash
+GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o epgo_linux_amd64
+```
 
 ### Option 2 -- Docker
 
-I need to set up the docker image. However, you can build your own by running:
-
-#### **docker-compose**
-
-clone this repo:
+Clone the repo and use the provided `docker-compose.yaml`:
 
 ```bash
 git clone https://github.com/Chuchodavids/EpGo.git
 ```
 
-```docker-compose
+```yaml
+# docker-compose.yaml
 services:
-    epgo:
-      container_name: epgo
-      build: .
-      environment:
-        - TZ=America/Chicago
-      volumes:
-        - YOUR_CONFIG.YAML_FOLDER:/app/
-      restart: always
+  epgo:
+    container_name: epgo
+    build:
+      context: .
+      args:
+        # Or amd64
+        - TARGETARCH=arm64
+    environment:
+      - TZ=America/Chicago
+    volumes:
+      # Assumes config.yaml is in the same directory as this docker-compose.yaml
+      - ./config.yaml:/app/config.yaml
+    command: -config /app/config.yaml
+    restart: never
 ```
 
-### Option 3 -- download binary
+The Docker image is built from the included `Dockerfile`, which downloads the latest release binary from GitHub.
 
-go to [releases](https://github.com/Chuchodavids/EpGo/releases) and download the needed version
+### Option 3 -- Download Binary
+
+Go to [releases](https://github.com/Chuchodavids/EpGo/releases) and download the binary for your platform. You can also use the `download.sh` script included in the repository.
 
 ## Using the APP
 
@@ -65,8 +82,10 @@ go to [releases](https://github.com/Chuchodavids/EpGo/releases) and download the
     = Get data from Schedules Direct with configuration file. [filename.yaml]
 -configure string
     = Create or modify the configuration file. [filename.yaml]
+-serve string
+    = Start a local HTTP server to serve files from the specified directory. [directory:port]
 -version
-    = shows the current version
+    = shows the current version (v3.2.1)
 -h  : Show help
 ```
 
@@ -134,7 +153,7 @@ Account:
 Files:
     Cache: config_cache.json
     XMLTV: config.xml
-    The MovieDB cache file: imdb_image_cache.json
+    The MovieDB cache file: config_tmdb_cache.json
 Server:
     Enable: false
     Address: localhost
@@ -145,7 +164,7 @@ Options:
     Subtitle into Description: false
     Insert credits tag into XML file: false
     Images:
-        Download Images: false
+        Download Images from Schedules Direct: false
         Image Path: ""
         The MovieDB:
             Enable: false
@@ -198,6 +217,14 @@ EPG data for the specified days. Schedules Direct has EPG data for the next 12-1
 ---
 
 ```yaml
+Live and New icons: false
+```
+
+**true:** Appends a unicode superscript "LIVE" or "New" badge to the programme title for live broadcasts and first-run episodes, respectively.
+
+---
+
+```yaml
 Subtitle into Description: false
 ```
 
@@ -225,11 +252,11 @@ Alan zieht aus, da seine Freundin Kandi und er in Las Vegas eine Million Dollar 
 ### Images: (Can be customized)
 
 ```yaml
-Download Images: false
+Download Images from Schedules Direct: false
 Image Path: ""
 ```
 
--   **Download Images**: `true` or `false`. If `true`, images will be downloaded to the `Image Path`. If `Image Path` is not set, it will default to a folder named `images`.
+-   **Download Images from Schedules Direct**: `true` or `false`. If `true`, images will be downloaded to the `Image Path`. If `Image Path` is not set, it will default to a folder named `images`.
 -   **Image Path**: The path where the images will be downloaded.
 
 #### The MovieDB
@@ -242,6 +269,8 @@ The MovieDB:
 
 -   **Enable**: `true` or `false` to enable or disable The MovieDB as a fallback image source.
 -   **Api Key**: Your The MovieDB API key.
+
+The TMDB cache file (default: `config_tmdb_cache.json`) persists search results to avoid redundant API calls.
 
 ---
 
@@ -392,6 +421,50 @@ Example:
 ```bash
 2020/07/18 19:10:53 [ERROR] Could not find requested image. Post message to http://forums.schedulesdirect.org/viewforum.php?f=6 if you are having issues. [SD API Error Code: 5000] Program ID: EP03481925
 ```
+
+---
+
+## LCN (Logical Channel Number)
+
+Each channel in the XMLTV output includes an `lcn` attribute for subchannel auto-matching in media servers like Plex and Jellyfin. The LCN is populated from the Schedules Direct lineup map — for OTA channels it uses `atscMajor.atscMinor`, and for cable/satellite it uses the channel number string.
+
+```xml
+<channel id="epgo.42635.schedulesdirect.org">
+  <display-name>WGBO-DT</display-name>
+  <display-name>66.1</display-name>
+  <lcn>66.1</lcn>
+  <icon src="https://...png" width="360" height="270"/>
+</channel>
+```
+
+---
+
+## Image Server
+
+When `Server.Enable` is set to `true` in the config, the HTTP image server starts automatically after XMLTV generation in `-config` mode. You can also start it independently with the `-serve` flag:
+
+```bash
+./epgo -serve /path/to/images:8080
+```
+
+---
+
+## Cron Scheduling
+
+To keep EPG data up to date, run EPGo on a schedule. Example crontab entries:
+
+```
+@reboot /app/epgo --config /data/livetv/config.yaml
+00 * * * * /app/epgo --config /data/livetv/config.yaml
+```
+
+A `cronjob` file with these examples is included in the repository.
+
+---
+
+## Cache Cleanup
+
+After each XMLTV generation, stale program and metadata entries are automatically purged from the cache file. This keeps the cache size manageable without manual intervention.
 
 ### Create the XMLTV file using the command line (CLI): 
 
