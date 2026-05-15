@@ -10,11 +10,12 @@ Server:
     Address: localhost
     Port: "80"
 Options:
+    Live and New icons: false
     Schedule Days: 1
     Subtitle into Description: false
     Insert credits tag into XML file: false
     Images:
-        Download Images: false
+        Download Images from Schedules Direct: false
         Image Path: ""
         The MovieDB:
             Enable: false
