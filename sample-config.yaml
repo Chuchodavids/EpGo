@@ -17,6 +17,7 @@ Options:
     Insert credits tag into XML file: false
     Images:
         Download Images from Schedules Direct: false
+        Insert typed image tags into XML file: false
         Image Path: ""
         The MovieDB:
             Enable: false

@@ -302,11 +302,11 @@ func (c *cache) GetIcon(id string) (i []Icon) {
 	if m, ok := c.Metadata[id]; ok {
 		// Define preferences for categories and aspect ratios. Lower index = higher preference.
 		categoryPrefs := map[string]int{
-			"Poster Art":  0,
-			"Box Art":     1,
-			"Banner-L1":   2,
-			"Banner-L2":   3,
-			"VOD Art":     4, // Fallback category
+			"Poster Art": 0,
+			"Box Art":    1,
+			"Banner-L1":  2,
+			"Banner-L2":  3,
+			"VOD Art":    4, // Fallback category
 		}
 		aspectPrefs := map[string]int{
 			"16x9": 0,
@@ -341,22 +341,8 @@ func (c *cache) GetIcon(id string) (i []Icon) {
 		}
 
 		if bestIcon != nil {
-			if Config.Options.Images.Download {
-				// Serve the image from the local image server. The token never
-				// ends up in the XMLTV file.
-				filename, err := downloadImage(bestIcon.Src)
-				if err != nil {
-					if Config.Options.SDDownloadErrors {
-						logger.Warn("Could not download image", "programID", id, "error", err)
-					}
-				} else {
-					bestIcon.Src = "http://" + Config.Server.Address + ":" + Config.Server.Port + "/" + filename
-					i = append(i, *bestIcon)
-				}
-			} else if isAbsoluteURL(bestIcon.Src) {
-				// Relative SD image URIs need a token, which must not be
-				// written to the XMLTV file. Only absolute URLs are usable
-				// without downloading.
+			if imageURL := programmeImageURL(bestIcon.Src, id); imageURL != "" {
+				bestIcon.Src = imageURL
 				i = append(i, *bestIcon)
 			}
 		}

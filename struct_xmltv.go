@@ -17,20 +17,29 @@ type Programme struct {
 	// Credits
 	Credits *Credits `xml:"credits,omitempty"`
 
-	Categorys   []Category   `xml:"category,omitempty"`
-	Language    string       `xml:"language,omitempty"`
-	EpisodeNums []EpisodeNum `xml:"episode-num,omitempty"`
+	Categorys []Category `xml:"category,omitempty"`
+	Language  string     `xml:"language,omitempty"`
 
 	//Icon
-	Icon  []Icon `xml:"icon"`
-	Video Video  `xml:"video"`
-	Audio Audio  `xml:"audio"`
-
-	Rating []Rating `xml:"rating,omitempty"`
+	Icon        []Icon       `xml:"icon"`
+	EpisodeNums []EpisodeNum `xml:"episode-num,omitempty"`
+	Video       Video        `xml:"video"`
+	Audio       Audio        `xml:"audio"`
 
 	PreviouslyShown *PreviouslyShown `xml:"previously-shown,omitempty"`
 	New             *New             `xml:"new"`
 	Live            *Live            `xml:"live"`
+	Rating          []Rating         `xml:"rating,omitempty"`
+	Images          []ProgrammeImage `xml:"image,omitempty"`
+}
+
+// ProgrammeImage : Typed programme artwork (XMLTV DTD).
+type ProgrammeImage struct {
+	Type   string `xml:"type,attr"`
+	Size   string `xml:"size,attr"`
+	Orient string `xml:"orient,attr"`
+	System string `xml:"system,attr"`
+	URL    string `xml:",chardata"`
 }
 
 // ChannelXML : Channel
@@ -124,7 +133,7 @@ type ProgramIcon struct {
 type Rating struct {
 	System string `xml:"system,attr"`
 	Value  string `xml:"value"`
-	Icon   []Icon `xml:"icon",omitempty`
+	Icon   []Icon `xml:"icon"`
 }
 
 type Video struct {

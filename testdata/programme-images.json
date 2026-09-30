@@ -1,0 +1,40 @@
+{
+  "Metadata": {
+    "MV000371790000": {"data": [
+      {"aspect":"2x3","height":180,"uri":"1bc844a92a5bf32cc5480c7178b931aac0ab8305de1c113f0dadd8575b70cb88.jpg","width":120,"category":"Poster Art","tier":""},
+      {"aspect":"2x3","height":360,"uri":"1c028933fcd04f93629b177a02ccbef64931dc187455184887b0f9e7a4043c42.jpg","width":240,"category":"Poster Art","tier":""},
+      {"aspect":"2x3","height":720,"uri":"05f4db2c359b3ad877306d6e89c50a09b0ca3a7867d9fef3f7464cfbcb18f98a.jpg","width":480,"category":"Poster Art","tier":""},
+      {"aspect":"16x9","height":540,"uri":"8325c7a63571a704bc619245b8fa4da0f5bc41c0800dbcb6a8a39d944c6deaf3.jpg","width":960,"category":"Iconic","tier":""}
+    ]},
+    "EP002061390830": {"data": [
+      {"aspect":"16x9","height":135,"uri":"42115b2aec4105b0794661633cb662ca980afa98d293f0c06451d8cd68279add.jpg","width":240,"category":"Iconic","tier":"Episode"},
+      {"aspect":"16x9","height":270,"uri":"b93b60c57b09ec9a1f7e82108cc711dd4f1e237fe0a8b1f86cdbf1e3c422b6c3.jpg","width":480,"category":"Iconic","tier":"Episode"},
+      {"aspect":"16x9","height":540,"uri":"d73e774200fe316c1e597b84d28f35593f65fbe72e18f731583d287a87f049b6.jpg","width":960,"category":"Iconic","tier":"Episode"},
+      {"aspect":"16x9","height":135,"uri":"c11cd91d7a737ded00cad10a3aca5d9267049291bb5f08ae4c692373dd87ef5f.jpg","width":240,"category":"Banner-L1","tier":"Season"},
+      {"aspect":"16x9","height":270,"uri":"214f8ab3ac963c62c64bf1d336fa987a25f62bb8f9a435805b470107c059827b.jpg","width":480,"category":"Banner-L1","tier":"Season"},
+      {"aspect":"16x9","height":540,"uri":"090384b68ddd76ad1752526b28db328e20c8434f33105eb1774131ee08c06bd3.jpg","width":960,"category":"Banner-L1","tier":"Season"},
+      {"aspect":"16x9","height":135,"uri":"7711b8fc2de3ed04da0a28c27c54f107736f6ee026024ceca85c18fb1501e890.jpg","width":240,"category":"Iconic","tier":"Season"},
+      {"aspect":"16x9","height":270,"uri":"123055a5f3c26fd45c77e2f1477b200f1eecac101eadbe7115abe29c98b17b87.jpg","width":480,"category":"Iconic","tier":"Season"},
+      {"aspect":"16x9","height":540,"uri":"ff44f63b1fcf9e5194bdddbbb6e1b4dba087e5658feb29d4385779c4f1365f64.jpg","width":960,"category":"Iconic","tier":"Season"}
+    ]},
+    "SH000199170000": {"data": [
+      {"aspect":"16x9","height":135,"uri":"c63ff5042424f2b8a5e659298828b0a2ae75e48847d915417fab7110541ea984.jpg","width":240,"category":"Banner-L1","tier":"Series"},
+      {"aspect":"16x9","height":270,"uri":"b9dcae793bab0347eb8d9c9900c527ca24d595e16f839818f0346782ae43d29e.jpg","width":480,"category":"Banner-L1","tier":"Series"},
+      {"aspect":"16x9","height":540,"uri":"4134e476ca1b23b5c9c9e3ea3f29e87a972245d039132500736d5b39dd83d787.jpg","width":960,"category":"Banner-L1","tier":"Series"},
+      {"aspect":"16x9","height":135,"uri":"2d6b7b8da1598e365a567991d4dce0160f5c5616eb5f8e63f6866c4dd204e1ad.jpg","width":240,"category":"Iconic","tier":"Series"},
+      {"aspect":"16x9","height":270,"uri":"4b726352d8b0a60c36cab4bcfe73d5f74f05652f70a565677508e8a5b9c86354.jpg","width":480,"category":"Iconic","tier":"Series"},
+      {"aspect":"16x9","height":540,"uri":"c29cd9fa2cec79445602fb566b4b374e1740924d47131a953d7b3f0797762d86.jpg","width":960,"category":"Iconic","tier":"Series"}
+    ]},
+    "EP000021447124": {"data": [
+      {"aspect":"16x9","height":135,"uri":"72ee2a879329a0cc75647f9439ff4dc28e1b2c70c1b0147b582710b05ee78db0.jpg","width":240,"category":"Banner-L1","tier":"Sport Event"},
+      {"aspect":"16x9","height":270,"uri":"4feb59fe4723b458c8559396d6f0026b86b0c2d2d5abf930b241a84a90727d53.jpg","width":480,"category":"Banner-L1","tier":"Sport Event"},
+      {"aspect":"16x9","height":540,"uri":"82f512c3b2f2bb0c3e96937181499998eabd691f19e2855ce472dd92567f07a8.jpg","width":960,"category":"Banner-L1","tier":"Sport Event"}
+    ]}
+  },
+  "Program": {
+    "MV000371790000": {"showType":"Feature Film","titles":[{"title120":"The Fugitive"}]},
+    "EP002061390830": {"showType":"Series","titles":[{"title120":"Deutschlandbilder"}]},
+    "SH000199170000": {"showType":"Sports non-event","titles":[{"title120":"SportsCenter"}]},
+    "EP000021447124": {"showType":"Sports event","titles":[{"title120":"Horse Racing"}]}
+  }
+}

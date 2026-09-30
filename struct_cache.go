@@ -100,7 +100,7 @@ type EPGoCache struct {
 			Episode int `json:"episode"`
 			Season  int `json:"season"`
 		} `json:"Gracenote"`
-	} `json:"metadata",omitempty`
+	} `json:"metadata"`
 
 	OriginalAirDate string `json:"originalAirDate,omitempty"`
 	ResourceID      string `json:"resourceID,omitempty"`

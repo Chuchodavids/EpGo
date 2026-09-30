@@ -166,6 +166,7 @@ Options:
     Insert credits tag into XML file: false
     Images:
         Download Images from Schedules Direct: false
+        Insert typed image tags into XML file: false
         Image Path: ""
         The MovieDB:
             Enable: false
@@ -264,11 +265,17 @@ Schedules Direct only has episode titles for some programmes. For the others, EP
 
 ```yaml
 Download Images from Schedules Direct: false
+Insert typed image tags into XML file: false
 Image Path: ""
 ```
 
 -   **Download Images from Schedules Direct**: `true` or `false`. If `true`, images will be downloaded to the `Image Path`. If `Image Path` is not set, it will default to a folder named `images`.
 -   **Image Path**: The path where the images will be downloaded.
+-   **Insert typed image tags into XML file**: Defaults to `false`. With this and **Download Images from Schedules Direct** enabled, adds XMLTV `<image>` elements alongside the unchanged `<icon>` selection. Images use the same local image server URLs and download limits as icons; shared files are downloaded only once. Failed downloads are omitted, and Schedules Direct account/token/limit errors stop further downloads for the run (already cached files remain usable).
+
+Typed images select Episode-tier Iconic art for `still`, Season-tier Iconic art (falling back to Series) for `backdrop`, and Season-tier Banner-L1 art (falling back to Series) for `poster`. Movies use Poster Art for `poster`. Sport Event/Team Event art is not mapped to these types. Missing types are omitted; The MovieDB fallback still applies only to `<icon>`.
+
+Within each tier, selection prefers 16:9, then 2:3, 4:3, 3:4, 2:1 and square images; movie posters prefer 2:3 before 16:9. Other aspects are a last resort. The largest width wins within an aspect, like the icon selection. Each image has `system="schedulesdirect"`, orientation from its dimensions (`P` portrait or `L` landscape; square uses `L`), and XMLTV size `1` for a largest dimension below 200px, `2` for 200–400px, or `3` above 400px. URLs never contain the Schedules Direct token.
 
 #### The MovieDB
 

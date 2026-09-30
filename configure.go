@@ -175,7 +175,7 @@ func (c *config) Open() (err error) {
 
 	}
 
-	if !bytes.Contains(data, []byte("Live and New icons")){
+	if !bytes.Contains(data, []byte("Live and New icons")) {
 		newOptions = true
 		Config.Options.LiveIcons = false
 	}
@@ -211,6 +211,11 @@ func (c *config) Open() (err error) {
 		Config.Server.Enable = false
 		Config.Server.Address = "localhost"
 		Config.Server.Port = "80"
+	}
+
+	if !bytes.Contains(data, []byte("Insert typed image tags into XML file:")) {
+		newOptions = true
+		c.Options.Images.Typed = false
 	}
 
 	if c.Server.Address == "" {
@@ -277,6 +282,7 @@ func (c *config) InitConfig() {
 	Config.Options.LiveIcons = false
 	// Options images
 	c.Options.Images.Download = false
+	c.Options.Images.Typed = false
 	c.Options.Images.Path = ""
 	c.Options.Images.Tmdb.Enable = false
 	c.Options.Images.Tmdb.ApiKey = ""

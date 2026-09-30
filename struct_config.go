@@ -29,6 +29,7 @@ type config struct {
 		Credits                  bool `yaml:"Insert credits tag into XML file"`
 		Images                   struct {
 			Download bool   `yaml:"Download Images from Schedules Direct"`
+			Typed    bool   `yaml:"Insert typed image tags into XML file"`
 			Path     string `yaml:"Image Path"`
 			Tmdb     struct {
 				Enable bool   `yaml:"Enable"`
