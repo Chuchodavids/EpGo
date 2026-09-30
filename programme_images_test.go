@@ -71,7 +71,10 @@ func TestSelectProgrammeImagesRealSamples(t *testing.T) {
 		id   string
 		want map[string]string
 	}{
-		{"MV000371790000", map[string]string{"poster": "05f4db2c359b3ad877306d6e89c50a09b0ca3a7867d9fef3f7464cfbcb18f98a.jpg"}},
+		{"MV000371790000", map[string]string{
+			"backdrop": "8325c7a63571a704bc619245b8fa4da0f5bc41c0800dbcb6a8a39d944c6deaf3.jpg",
+			"poster":   "05f4db2c359b3ad877306d6e89c50a09b0ca3a7867d9fef3f7464cfbcb18f98a.jpg",
+		}},
 		{"EP002061390830", map[string]string{
 			"still":    "d73e774200fe316c1e597b84d28f35593f65fbe72e18f731583d287a87f049b6.jpg",
 			"backdrop": "ff44f63b1fcf9e5194bdddbbb6e1b4dba087e5658feb29d4385779c4f1365f64.jpg",
@@ -82,6 +85,7 @@ func TestSelectProgrammeImagesRealSamples(t *testing.T) {
 			"poster":   "4134e476ca1b23b5c9c9e3ea3f29e87a972245d039132500736d5b39dd83d787.jpg",
 		}},
 		{"EP000021447124", map[string]string{}},
+		{"EP000031285726", map[string]string{"backdrop": "d7a592ea0964d41a1683f951b6a977e3649438c7c0d50e1d97c7f746e37f2f3e.jpg"}},
 		{"missing", map[string]string{}},
 	} {
 		t.Run(tt.id, func(t *testing.T) {
@@ -126,6 +130,13 @@ func TestSelectProgrammeImagesPreferences(t *testing.T) {
 	}}
 	if got := c.selectProgrammeImages("EPtest"); got["still"].URI != "other-aspect.jpg" {
 		t.Fatalf("other aspect fallback = %v", got)
+	}
+	c.Metadata["EPsports"] = EPGoCache{Data: []Data{
+		{URI: "sports.jpg", Category: "Backdrop-Sports", Tier: "Team Event", Aspect: "16x9", Width: 1920, Height: 1080},
+		{URI: "series-iconic.jpg", Category: "Iconic", Tier: "Series", Aspect: "16x9", Width: 240, Height: 135},
+	}}
+	if got := c.selectProgrammeImages("EPsports"); got["backdrop"].URI != "series-iconic.jpg" {
+		t.Fatalf("Iconic must take priority over sports backdrops: %v", got)
 	}
 	c.Program = map[string]EPGoCache{"movie": {ShowType: "Feature Film"}}
 	c.Metadata["movie"] = EPGoCache{Data: data}
@@ -337,7 +348,7 @@ func TestProgrammeImagesXML(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := string(data)
-	if strings.Contains(output, Token) || strings.Contains(output, sdImageURL) || strings.Count(output, "<image ") != 6 {
+	if strings.Contains(output, Token) || strings.Contains(output, sdImageURL) || strings.Count(output, "<image ") != 7 {
 		t.Fatalf("unsafe/missing typed XML: %s", output)
 	}
 	for _, programme := range programmes {

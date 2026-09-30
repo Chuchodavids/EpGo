@@ -2,13 +2,14 @@
 
 `programme-images.json` contains selected real metadata rows and titles from
 the supplied, token-blanked EpGo cache. The rows retain the preferred aspect
-at several sizes; the movie also retains untyped Iconic art to check omission.
+at several sizes; the movie also retains untiered Iconic art for its backdrop.
 No account fields or tokens are included.
 
-- `MV000371790000`: The Fugitive (movie Poster Art).
+- `MV000371790000`: The Fugitive (movie Poster Art and untiered Iconic).
 - `EP002061390830`: Deutschlandbilder (Episode and Season art).
 - `SH000199170000`: SportsCenter (only Series art).
 - `EP000021447124`: Horse Racing (only Sport Event art).
+- `EP000031285726`: NFL Football (Team Event Backdrop-Sports art).
 
 The source cache has no EP-prefixed metadata entries with Series-tier art.
 The series-only episode test therefore reuses the real SportsCenter image

@@ -41,6 +41,11 @@ func (c *cache) selectProgrammeImages(id string) map[string]Data {
 			imageType = "still"
 		case data.Category == "Iconic" && (data.Tier == "Season" || data.Tier == "Series"):
 			imageType = "backdrop"
+		case movie && data.Category == "Iconic" && data.Tier == "":
+			imageType = "backdrop"
+		case data.Category == "Backdrop-Sports":
+			imageType = "backdrop"
+			tierScore = 2
 		case movie && data.Category == "Poster Art":
 			imageType = "poster"
 		case !movie && data.Category == "Banner-L1" && (data.Tier == "Season" || data.Tier == "Series"):

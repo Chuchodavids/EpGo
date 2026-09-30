@@ -29,12 +29,18 @@
       {"aspect":"16x9","height":135,"uri":"72ee2a879329a0cc75647f9439ff4dc28e1b2c70c1b0147b582710b05ee78db0.jpg","width":240,"category":"Banner-L1","tier":"Sport Event"},
       {"aspect":"16x9","height":270,"uri":"4feb59fe4723b458c8559396d6f0026b86b0c2d2d5abf930b241a84a90727d53.jpg","width":480,"category":"Banner-L1","tier":"Sport Event"},
       {"aspect":"16x9","height":540,"uri":"82f512c3b2f2bb0c3e96937181499998eabd691f19e2855ce472dd92567f07a8.jpg","width":960,"category":"Banner-L1","tier":"Sport Event"}
+    ]},
+    "EP000031285726": {"data": [
+      {"aspect":"16x9","height":135,"uri":"161bc3a1a2c34b0300db0699d582ff5d661358cba5b2703198e5262bed416432.jpg","width":240,"category":"Backdrop-Sports","tier":"Team Event"},
+      {"aspect":"16x9","height":270,"uri":"4f121950612e66c42393881bdca9dc004127b2c1caeb451ce6c79d018d6d8f85.jpg","width":480,"category":"Backdrop-Sports","tier":"Team Event"},
+      {"aspect":"16x9","height":540,"uri":"d7a592ea0964d41a1683f951b6a977e3649438c7c0d50e1d97c7f746e37f2f3e.jpg","width":960,"category":"Backdrop-Sports","tier":"Team Event"}
     ]}
   },
   "Program": {
     "MV000371790000": {"showType":"Feature Film","titles":[{"title120":"The Fugitive"}]},
     "EP002061390830": {"showType":"Series","titles":[{"title120":"Deutschlandbilder"}]},
     "SH000199170000": {"showType":"Sports non-event","titles":[{"title120":"SportsCenter"}]},
-    "EP000021447124": {"showType":"Sports event","titles":[{"title120":"Horse Racing"}]}
+    "EP000021447124": {"showType":"Sports event","titles":[{"title120":"Horse Racing"}]},
+    "EP000031285726": {"showType":"Sports event","titles":[{"title120":"NFL Football"}]}
   }
 }
