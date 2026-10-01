@@ -169,6 +169,7 @@ Options:
         Insert typed image tags into XML file: false
         Image Path: ""
         Delete images unused for days. 0 to keep all: 0
+        Image links as local files: false
         The MovieDB:
             Enable: false
             Api Key: ""
@@ -269,11 +270,13 @@ Download Images from Schedules Direct: false
 Insert typed image tags into XML file: false
 Image Path: ""
 Delete images unused for days. 0 to keep all: 0
+Image links as local files: false
 ```
 
 -   **Download Images from Schedules Direct**: `true` or `false`. If `true`, images will be downloaded to the `Image Path`. If `Image Path` is not set, it will default to a folder named `images`.
 -   **Image Path**: The path where the images will be downloaded. If Schedules Direct reports the daily image limit, no more images are requested until it resets the counter at 00:00 UTC, also in later runs.
--   **Delete images unused for days. 0 to keep all**: Defaults to `0`, which never deletes images. With a number of days, each run deletes downloaded images that no programme in the guide has used for that many days. Files that are not images are left alone. If a run finds no images at all, nothing is deleted.
+-   **Delete images unused for days. 0 to keep all**: Defaults to `0`, which never deletes images. With a number of days, each run deletes downloaded images that no programme in the guide has used for that many days. Files that are not images are left alone. If a run finds no images at all, nothing is deleted. Only the guide counts as use: if a client keeps image links, like Tvheadend does for recordings, update the modification time of those files before each run or they are deleted too.
+-   **Image links as local files**: Defaults to `false`, which links images through the image server (`http://<Server Address>:<Port>/<file>`). With `true`, images are linked as `file://` URLs to the `Image Path`, for clients on the same machine that serve local images themselves (Tvheadend serves `file://` images to its clients). The image server is not needed then.
 -   **Insert typed image tags into XML file**: Defaults to `false`. With this and **Download Images from Schedules Direct** enabled, adds XMLTV `<image>` elements alongside the unchanged `<icon>` selection. Images use the same local image server URLs and download limits as icons; shared files are downloaded only once. Failed downloads are omitted, and Schedules Direct account/token/limit errors stop further downloads for the run (already cached files remain usable).
 
 Typed images select Episode-tier Iconic art for `still`, Season-tier Iconic art (falling back to Series) for `backdrop`, and Season-tier Banner-L1 art (falling back to Series) for `poster`. Movies use Poster Art for `poster` and their Iconic art for `backdrop`. Sport and team events without Iconic art use Backdrop-Sports for `backdrop`; other Sport Event/Team Event art is not mapped. Missing types are omitted; The MovieDB fallback still applies only to `<icon>`.

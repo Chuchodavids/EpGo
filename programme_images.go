@@ -1,6 +1,10 @@
 package main
 
-import "strings"
+import (
+	"net/url"
+	"path/filepath"
+	"strings"
+)
 
 // programmeImageURL shares the icon download path, including file reuse and
 // SD's stop-on-error handling. Never expose the authenticated download URL.
@@ -13,6 +17,9 @@ func programmeImageURL(uri, id string) string {
 			}
 			return ""
 		}
+		if Config.Options.Images.Local {
+			return localImageURL(filename)
+		}
 		return "http://" + Config.Server.Address + ":" + Config.Server.Port + "/" + filename
 	}
 	// Relative SD image URIs require a token and cannot be written to XMLTV.
@@ -20,6 +27,15 @@ func programmeImageURL(uri, id string) string {
 		return uri
 	}
 	return ""
+}
+
+// localImageURL links an image file directly, for clients on the same machine.
+func localImageURL(filename string) string {
+	folder, err := filepath.Abs(imageFolder())
+	if err != nil {
+		folder = imageFolder()
+	}
+	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(filepath.Join(folder, filename))}).String()
 }
 
 // selectProgrammeImages selects at most one image per type. Tier preference

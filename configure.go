@@ -285,6 +285,7 @@ func (c *config) InitConfig() {
 	c.Options.Images.Typed = false
 	c.Options.Images.Path = ""
 	c.Options.Images.Cleanup = 0
+	c.Options.Images.Local = false
 	c.Options.Images.Tmdb.Enable = false
 	c.Options.Images.Tmdb.ApiKey = ""
 

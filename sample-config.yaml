@@ -20,6 +20,7 @@ Options:
         Insert typed image tags into XML file: false
         Image Path: ""
         Delete images unused for days. 0 to keep all: 0
+        Image links as local files: false
         The MovieDB:
             Enable: false
             Api Key: ""

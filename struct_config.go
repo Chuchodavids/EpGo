@@ -32,6 +32,7 @@ type config struct {
 			Typed    bool   `yaml:"Insert typed image tags into XML file"`
 			Path     string `yaml:"Image Path"`
 			Cleanup  int    `yaml:"Delete images unused for days. 0 to keep all"`
+			Local    bool   `yaml:"Image links as local files"`
 			Tmdb     struct {
 				Enable bool   `yaml:"Enable"`
 				ApiKey string `yaml:"Api Key"`

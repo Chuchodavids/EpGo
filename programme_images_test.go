@@ -424,3 +424,19 @@ func TestImageFixtureStatistics(t *testing.T) {
 	t.Logf("programmes=%d still=%d backdrop=%d poster=%d icon_files=%d typed_files=%d extra_files=%d total_files=%d",
 		len(c.Metadata), counts["still"], counts["backdrop"], counts["poster"], len(icons), len(typed), extra, len(icons)+extra)
 }
+
+func TestLocalImageLinks(t *testing.T) {
+	imageTestConfig(t)
+	Config.Options.Images.Local = true
+	if err := os.WriteFile(filepath.Join(Config.Options.Images.Path, "local.jpg"), []byte("cached"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	c := &cache{Metadata: map[string]EPGoCache{"EPtest": {Data: []Data{
+		{URI: "local.jpg", Category: "Iconic", Tier: "Episode", Width: 960, Height: 540},
+	}}}}
+	got := c.GetImages("EPtest")
+	want := "file://" + filepath.ToSlash(filepath.Join(Config.Options.Images.Path, "local.jpg"))
+	if len(got) != 1 || got[0].URL != want {
+		t.Fatalf("local image link = %v, want %s", got, want)
+	}
+}
