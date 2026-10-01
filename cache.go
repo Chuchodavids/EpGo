@@ -298,6 +298,17 @@ func (c *cache) GetRequiredMetaIDs() (metaIDs []string) {
 }
 
 func (c *cache) GetIcon(id string) (i []Icon) {
+	if bestIcon := c.selectIcon(id); bestIcon != nil {
+		if imageURL := programmeImageURL(bestIcon.Src, id); imageURL != "" {
+			bestIcon.Src = imageURL
+			i = append(i, *bestIcon)
+		}
+	}
+	return
+}
+
+// selectIcon returns the preferred icon with its SD URI, without downloading it.
+func (c *cache) selectIcon(id string) (bestIcon *Icon) {
 
 	if m, ok := c.Metadata[id]; ok {
 		// Define preferences for categories and aspect ratios. Lower index = higher preference.
@@ -317,7 +328,6 @@ func (c *cache) GetIcon(id string) (i []Icon) {
 			"1x1":  5,
 		}
 
-		var bestIcon *Icon
 		bestScore := -1
 
 		for _, iconData := range m.Data {
@@ -340,12 +350,6 @@ func (c *cache) GetIcon(id string) (i []Icon) {
 			}
 		}
 
-		if bestIcon != nil {
-			if imageURL := programmeImageURL(bestIcon.Src, id); imageURL != "" {
-				bestIcon.Src = imageURL
-				i = append(i, *bestIcon)
-			}
-		}
 	}
 	return
 }
@@ -773,6 +777,18 @@ func (c *cache) GetRating(id, countryCode string) (ra []Rating) {
 // requests are sent for the rest of the run.
 var imageDownloadsStopped bool
 
+// imageFailures remembers images that failed in this run, so programmes
+// sharing an image do not request it again. Both are guarded by imageMu
+// because images are downloaded in parallel.
+var imageFailures = map[string]error{}
+var imageMu sync.Mutex
+
+func imagesStopped() bool {
+	imageMu.Lock()
+	defer imageMu.Unlock()
+	return imageDownloadsStopped
+}
+
 const sdImageURL = "https://json.schedulesdirect.org/20141201/image/"
 
 func isAbsoluteURL(uri string) bool {
@@ -807,8 +823,23 @@ var sdImageStopCodes = map[int]bool{
 }
 
 // downloadImage downloads an image into the image folder and returns the
-// file name. Existing files are not downloaded again.
+// file name. Existing files and failed images are not requested again.
 func downloadImage(uri string) (string, error) {
+	filename, err := fetchImage(uri)
+	if err != nil && filename != "" {
+		imageMu.Lock()
+		if !imageDownloadsStopped {
+			imageFailures[filename] = err
+		}
+		imageMu.Unlock()
+		return "", err
+	}
+	return filename, err
+}
+
+// fetchImage returns the image file name, also with an error, so that
+// downloadImage can remember the failure.
+func fetchImage(uri string) (string, error) {
 
 	folderImage := Config.Options.Images.Path
 
@@ -833,7 +864,14 @@ func downloadImage(uri string) (string, error) {
 		return filename, nil
 	}
 
-	if imageDownloadsStopped {
+	imageMu.Lock()
+	failure, failed := imageFailures[filename]
+	stopped := imageDownloadsStopped
+	imageMu.Unlock()
+	if failed {
+		return "", failure
+	}
+	if stopped {
 		return "", fmt.Errorf("image downloads stopped for this run")
 	}
 
@@ -846,13 +884,13 @@ func downloadImage(uri string) (string, error) {
 
 	req, err := http.NewRequest("GET", imageURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create image request for %s: %w", filename, err)
+		return filename, fmt.Errorf("failed to create image request for %s: %w", filename, err)
 	}
 	req.Header.Set("User-Agent", AppName)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to download image %s: %w", filename, redactToken(err))
+		return filename, fmt.Errorf("failed to download image %s: %w", filename, redactToken(err))
 	}
 	defer resp.Body.Close()
 
@@ -867,20 +905,22 @@ func downloadImage(uri string) (string, error) {
 		}
 		if json.Unmarshal(body, &sdErr) == nil && sdErr.Code != 0 {
 			if sdImageStopCodes[sdErr.Code] {
+				imageMu.Lock()
 				imageDownloadsStopped = true
+				imageMu.Unlock()
 				logger.Warn("Schedules Direct returned an error, no more images will be requested in this run",
 					"code", sdErr.Code, "response", sdErr.Response, "message", sdErr.Message)
 			}
-			return "", fmt.Errorf("schedules direct error %d (%s) for image %s", sdErr.Code, sdErr.Response, filename)
+			return filename, fmt.Errorf("schedules direct error %d (%s) for image %s", sdErr.Code, sdErr.Response, filename)
 		}
-		return "", fmt.Errorf("unexpected response for image %s: %s, content type %q", filename, resp.Status, resp.Header.Get("Content-Type"))
+		return filename, fmt.Errorf("unexpected response for image %s: %s, content type %q", filename, resp.Status, resp.Header.Get("Content-Type"))
 	}
 
 	// Write to a temporary file first so an interrupted download never
 	// leaves a truncated image that would be served forever.
 	tmp, err := os.CreateTemp(folderImage, filename+".*.tmp")
 	if err != nil {
-		return "", fmt.Errorf("failed to create file: %w", err)
+		return filename, fmt.Errorf("failed to create file: %w", err)
 	}
 	_, err = io.Copy(tmp, resp.Body)
 	closeErr := tmp.Close()
@@ -889,15 +929,15 @@ func downloadImage(uri string) (string, error) {
 	}
 	if err != nil {
 		os.Remove(tmp.Name())
-		return "", fmt.Errorf("failed to save image %s: %w", filename, err)
+		return filename, fmt.Errorf("failed to save image %s: %w", filename, err)
 	}
 	if err = os.Chmod(tmp.Name(), 0644); err != nil {
 		os.Remove(tmp.Name())
-		return "", fmt.Errorf("failed to save image %s: %w", filename, err)
+		return filename, fmt.Errorf("failed to save image %s: %w", filename, err)
 	}
 	if err = os.Rename(tmp.Name(), filePath); err != nil {
 		os.Remove(tmp.Name())
-		return "", fmt.Errorf("failed to save image %s: %w", filename, err)
+		return filename, fmt.Errorf("failed to save image %s: %w", filename, err)
 	}
 
 	return filename, nil

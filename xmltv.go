@@ -63,6 +63,8 @@ func CreateXMLTV(filename string) (err error) {
 		return
 	}
 
+	Cache.prefetchImages()
+
 	logger.Info("Create XMLTV File", "filename", Config.Files.XMLTV)
 
 	he(enc.EncodeToken(xml.StartElement{Name: xml.Name{Local: "tv"}, Attr: []xml.Attr{generator, source, info}}))

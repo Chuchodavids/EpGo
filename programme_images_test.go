@@ -40,6 +40,7 @@ func imageTestConfig(t *testing.T) {
 	Config.Server.Port = "8080"
 	Token = "test-secret-token"
 	imageDownloadsStopped = false
+	imageFailures = map[string]error{}
 	logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	http.DefaultClient = &http.Client{Transport: imageTransport(func(r *http.Request) (*http.Response, error) {
 		t.Errorf("unexpected image request: %s", r.URL.Path)
