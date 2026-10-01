@@ -31,6 +31,7 @@ type config struct {
 			Download bool   `yaml:"Download Images from Schedules Direct"`
 			Typed    bool   `yaml:"Insert typed image tags into XML file"`
 			Path     string `yaml:"Image Path"`
+			Cleanup  int    `yaml:"Delete images unused for days. 0 to keep all"`
 			Tmdb     struct {
 				Enable bool   `yaml:"Enable"`
 				ApiKey string `yaml:"Api Key"`

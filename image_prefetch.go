@@ -1,6 +1,11 @@
 package main
 
-import "sync"
+import (
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+)
 
 // imageDownloadWorkers is the number of parallel image downloads. One request
 // takes most of a second, mostly for SD's redirect, so a serial first run with
@@ -16,11 +21,21 @@ func (c *cache) prefetchImages() {
 	}
 	seen := make(map[string]bool)
 	var uris []string
+	now := time.Now()
+	cached := 0
 	add := func(uri string) {
-		if name := imageFilename(uri); uri != "" && !seen[name] {
-			seen[name] = true
-			uris = append(uris, uri)
+		name := imageFilename(uri)
+		if uri == "" || seen[name] {
+			return
 		}
+		seen[name] = true
+		// Existing images are marked as used, which is what the cleanup
+		// goes by, and need no download.
+		if err := os.Chtimes(filepath.Join(imageFolder(), name), now, now); err == nil {
+			cached++
+			return
+		}
+		uris = append(uris, uri)
 	}
 	for _, channel := range c.Channel {
 		for _, s := range c.Schedule[channel.StationID] {
@@ -34,7 +49,7 @@ func (c *cache) prefetchImages() {
 			}
 		}
 	}
-	logger.Info("Downloading images", "images", len(uris), "workers", imageDownloadWorkers)
+	logger.Info("Downloading images", "images", len(uris), "cached", cached, "workers", imageDownloadWorkers)
 
 	jobs := make(chan string)
 	var wg sync.WaitGroup
@@ -67,4 +82,6 @@ func (c *cache) prefetchImages() {
 	close(jobs)
 	wg.Wait()
 	logger.Info("Images downloaded", "done", done, "failed", failed, "images", len(uris), "stopped", imagesStopped())
+
+	deleteUnusedImages(len(seen))
 }
