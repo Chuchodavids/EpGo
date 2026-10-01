@@ -433,21 +433,19 @@ func (c *cache) GetTitle(id, lang string) (t []Title) {
 	return
 }
 
-func (c *cache) GetSubTitle(id, lang string) (s SubTitle) {
+func (c *cache) GetSubTitle(id, lang string) (s *SubTitle) {
 
 	if p, ok := c.Program[id]; ok {
 
 		if len(p.EpisodeTitle150) != 0 {
 
-			s.Value = p.EpisodeTitle150
-			s.Lang = lang
+			s = &SubTitle{Value: p.EpisodeTitle150, Lang: lang}
 
-		} else {
+		} else if !Config.Options.SubtitleEpisodeTitleOnly {
 
 			for _, d := range p.Descriptions.Description100 {
 
-				s.Value = d.Description
-				s.Lang = d.DescriptionLanguage
+				s = &SubTitle{Value: d.Description, Lang: d.DescriptionLanguage}
 
 			}
 
@@ -492,64 +490,109 @@ func (c *cache) GetDescs(id, subTitle string) (de []Desc) {
 	return
 }
 
-func (c *cache) GetCredits(id string) (cr Credits) {
+// creditRoles maps SD cast and crew roles to XMLTV credits elements.
+var creditRoles = map[string]string{
+	"Director":     "director",
+	"Actor":        "actor",
+	"Voice":        "actor",
+	"Guest Star":   "actor",
+	"Guest Voice":  "actor",
+	"Writer":       "writer",
+	"Screenwriter": "writer",
+	"Producer":     "producer",
+	"Presenter":    "presenter",
+	"Host":         "presenter",
+	"Anchor":       "presenter",
+	"Guest":        "guest",
+	"Self":         "guest",
+	"Contestant":   "guest",
+}
+
+func (c *cache) GetCredits(id string) *Credits {
+
+	var cr Credits
 
 	if Config.Options.Credits {
 
 		if p, ok := c.Program[id]; ok {
 
-			// Crew
-			for _, crew := range p.Crew {
+			add := func(role, name, character string) {
 
-				switch crew.Role {
+				switch creditRoles[role] {
 
-				case "Director":
-					cr.Director = append(cr.Director, Director{Value: crew.Name})
+				case "director":
+					cr.Director = append(cr.Director, Director{Value: name})
 
-				case "Producer":
-					cr.Producer = append(cr.Producer, Producer{Value: crew.Name})
+				case "actor":
+					cr.Actor = append(cr.Actor, Actor{Value: name, Role: character})
 
-				case "Presenter":
-					cr.Presenter = append(cr.Presenter, Presenter{Value: crew.Name})
+				case "writer":
+					cr.Writer = append(cr.Writer, Writer{Value: name})
 
-				case "Writer":
-					cr.Writer = append(cr.Writer, Writer{Value: crew.Name})
+				case "producer":
+					cr.Producer = append(cr.Producer, Producer{Value: name})
+
+				case "presenter":
+					cr.Presenter = append(cr.Presenter, Presenter{Value: name})
+
+				case "guest":
+					cr.Guest = append(cr.Guest, Guest{Value: name})
 
 				}
 
 			}
 
+			// Crew
+			for _, crew := range p.Crew {
+				add(crew.Role, crew.Name, "")
+			}
+
 			// Cast
 			for _, cast := range p.Cast {
-
-				switch cast.Role {
-
-				case "Actor":
-					cr.Actor = append(cr.Actor, Actor{Value: cast.Name, Role: cast.CharacterName})
-
-				}
-
+				add(cast.Role, cast.Name, cast.CharacterName)
 			}
 
 		}
 
 	}
 
-	return
+	if len(cr.Director)+len(cr.Actor)+len(cr.Writer)+len(cr.Producer)+len(cr.Presenter)+len(cr.Guest) == 0 {
+		return nil
+	}
+
+	return &cr
+}
+
+// programTypes are the generic programme types derived from the SD program
+// ID prefix. Clients like MythTV look for exactly these categories.
+var programTypes = map[string]string{
+	"MV": "movie",
+	"EP": "series",
+	"SH": "tvshow",
+	"SP": "sports",
 }
 
 func (c *cache) GetCategory(id string) (ca []Category) {
 
 	if p, ok := c.Program[id]; ok {
 
+		seen := make(map[string]bool)
+		add := func(value string) {
+			if value != "" && !seen[value] {
+				seen[value] = true
+				ca = append(ca, Category{Value: value, Lang: "en"})
+			}
+		}
+
 		for _, g := range p.Genres {
+			add(g)
+		}
 
-			var category Category
-			category.Value = g
-			category.Lang = "en"
+		// SD show type, e.g. "Series", "Feature Film" or "Sports event"
+		add(p.ShowType)
 
-			ca = append(ca, category)
-
+		if len(id) >= 2 {
+			add(programTypes[id[:2]])
 		}
 
 	}
