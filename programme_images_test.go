@@ -27,9 +27,10 @@ func (f imageTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 func imageTestConfig(t *testing.T) {
 	t.Helper()
 	oldConfig, oldToken, oldStopped := Config, Token, imageDownloadsStopped
-	oldLogger, oldClient := logger, http.DefaultClient
+	oldLogger, oldClient, oldLimit := logger, http.DefaultClient, Cache.ImageLimitUntil
 	t.Cleanup(func() {
 		Config, Token, imageDownloadsStopped = oldConfig, oldToken, oldStopped
+		Cache.ImageLimitUntil = oldLimit
 		logger, http.DefaultClient = oldLogger, oldClient
 	})
 	Config = config{}
@@ -41,6 +42,7 @@ func imageTestConfig(t *testing.T) {
 	Token = "test-secret-token"
 	imageDownloadsStopped = false
 	imageFailures = map[string]error{}
+	Cache.ImageLimitUntil = 0
 	logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	http.DefaultClient = &http.Client{Transport: imageTransport(func(r *http.Request) (*http.Response, error) {
 		t.Errorf("unexpected image request: %s", r.URL.Path)

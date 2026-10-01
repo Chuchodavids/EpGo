@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Cache : Cache file
@@ -829,6 +830,18 @@ var sdImageStopCodes = map[int]bool{
 	5003: true, // MAX_IMAGE_DOWNLOADS_TRIAL
 }
 
+// sdImageLimitCodes are the daily image limit errors. The limit stays reached
+// until SD resets the counter, so later runs that day must not ask again.
+var sdImageLimitCodes = map[int]bool{
+	5002: true, // MAX_IMAGE_DOWNLOADS
+	5003: true, // MAX_IMAGE_DOWNLOADS_TRIAL
+}
+
+// imageLimitReset returns when SD resets the daily image counter (00:00Z).
+func imageLimitReset(now time.Time) time.Time {
+	return now.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
+}
+
 // downloadImage downloads an image into the image folder and returns the
 // file name. Existing files and failed images are not requested again.
 func downloadImage(uri string) (string, error) {
@@ -910,6 +923,9 @@ func fetchImage(uri string) (string, error) {
 			if sdImageStopCodes[sdErr.Code] {
 				imageMu.Lock()
 				imageDownloadsStopped = true
+				if sdImageLimitCodes[sdErr.Code] {
+					Cache.ImageLimitUntil = imageLimitReset(time.Now()).Unix()
+				}
 				imageMu.Unlock()
 				logger.Warn("Schedules Direct returned an error, no more images will be requested in this run",
 					"code", sdErr.Code, "response", sdErr.Response, "message", sdErr.Message)

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func prefetchFixture(t *testing.T) *cache {
@@ -88,5 +89,42 @@ func TestPrefetchImagesStopAndFailures(t *testing.T) {
 	}
 	if imageDownloadsStopped || unique == 0 || requests != unique {
 		t.Fatalf("failed images requested again: stopped=%v first=%d total=%d", imageDownloadsStopped, unique, requests)
+	}
+}
+
+func TestImageLimitRemembered(t *testing.T) {
+	imageTestConfig(t)
+	c := prefetchFixture(t)
+	http.DefaultClient.Transport = imageTransport(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"code":5002,"response":"MAX_IMAGE_DOWNLOADS"}`))}, nil
+	})
+	c.prefetchImages()
+	if want := imageLimitReset(time.Now()).Unix(); Cache.ImageLimitUntil != want {
+		t.Fatalf("limit until %d, want %d", Cache.ImageLimitUntil, want)
+	}
+
+	// A later run on the same day must not request any image.
+	imageDownloadsStopped = false
+	imageFailures = map[string]error{}
+	http.DefaultClient.Transport = imageTransport(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("image requested before the limit reset: %s", r.URL.Path)
+		return nil, fmt.Errorf("network disabled")
+	})
+	c.prefetchImages()
+	if !imageDownloadsStopped {
+		t.Fatal("image downloads not stopped")
+	}
+}
+
+func TestImageLimitReset(t *testing.T) {
+	vienna := time.FixedZone("CEST", 2*3600)
+	for now, want := range map[time.Time]string{
+		time.Date(2026, 10, 1, 9, 12, 0, 0, vienna): "2026-10-02T00:00:00Z",
+		time.Date(2026, 10, 2, 1, 30, 0, 0, vienna): "2026-10-02T00:00:00Z",
+		time.Date(2026, 10, 2, 2, 30, 0, 0, vienna): "2026-10-03T00:00:00Z",
+	} {
+		if got := imageLimitReset(now).Format(time.RFC3339); got != want {
+			t.Errorf("%s: got %s, want %s", now, got, want)
+		}
 	}
 }

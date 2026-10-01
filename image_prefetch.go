@@ -49,6 +49,12 @@ func (c *cache) prefetchImages() {
 			}
 		}
 	}
+	if until := time.Unix(Cache.ImageLimitUntil, 0); now.Before(until) {
+		imageMu.Lock()
+		imageDownloadsStopped = true
+		imageMu.Unlock()
+		logger.Warn("The daily image limit was reached in an earlier run, no images will be requested before it resets", "reset", until)
+	}
 	logger.Info("Downloading images", "images", len(uris), "cached", cached, "workers", imageDownloadWorkers)
 
 	jobs := make(chan string)

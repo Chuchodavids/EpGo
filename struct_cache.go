@@ -14,6 +14,10 @@ type cache struct {
 	Token        string `json:"Token,omitempty"`
 	TokenExpires int64  `json:"TokenExpires,omitempty"`
 
+	// ImageLimitUntil is when SD resets the daily image counter after an
+	// earlier run reached the limit. No images are requested before then.
+	ImageLimitUntil int64 `json:"ImageLimitUntil,omitempty"`
+
 	sync.RWMutex `json:"-"`
 }
 
