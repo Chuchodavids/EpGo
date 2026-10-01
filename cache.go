@@ -167,6 +167,7 @@ func (c *cache) AddProgram(gzip *[]byte, wg *sync.WaitGroup) {
 		epgoCache.ContentRating = sd.ContentRating
 		epgoCache.Cast = sd.Cast
 		epgoCache.Crew = sd.Crew
+		epgoCache.Md5 = sd.Md5
 
 		c.Program[sd.ProgramID] = epgoCache
 
@@ -248,16 +249,26 @@ func (c *cache) GetAllProgramIDs() (programIDs []string) {
 	return
 }
 
+// GetRequiredProgramIDs returns the programs that are not cached yet or
+// whose data changed since they were cached. The schedule carries the md5 of
+// the current program data, which SD changes when it updates a program, for
+// example when an episode title is added after the program was announced.
 func (c *cache) GetRequiredProgramIDs() (programIDs []string) {
 
-	var allProgramIDs = c.GetAllProgramIDs()
+	var seen = make(map[string]bool)
 
-	for _, id := range allProgramIDs {
+	for _, channel := range c.Schedule {
 
-		if _, ok := c.Program[id]; !ok {
+		for _, schedule := range channel {
 
-			if ContainsString(programIDs, id) == -1 {
-				programIDs = append(programIDs, id)
+			if seen[schedule.ProgramID] {
+				continue
+			}
+
+			// Check every airing: any one of them may carry the changed md5.
+			if p, ok := c.Program[schedule.ProgramID]; !ok || p.Md5 != schedule.Md5 {
+				seen[schedule.ProgramID] = true
+				programIDs = append(programIDs, schedule.ProgramID)
 			}
 
 		}
