@@ -13,6 +13,7 @@ Options:
     Live and New icons: false
     Schedule Days: 1
     Subtitle into Description: false
+    Subtitle only from episode titles: false
     Insert credits tag into XML file: false
     Images:
         Download Images from Schedules Direct: false

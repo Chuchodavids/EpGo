@@ -268,6 +268,7 @@ func (c *config) InitConfig() {
 	// Options
 	c.Options.Schedule = 7
 	c.Options.SubtitleIntoDescription = false
+	c.Options.SubtitleEpisodeTitleOnly = false
 	c.Options.Credits = false
 	Config.Options.Rating.Guidelines = true
 	Config.Options.Rating.Countries = []string{"USA", "CHE", "DE"}
