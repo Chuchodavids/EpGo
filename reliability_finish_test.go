@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -246,6 +247,83 @@ func TestReliabilityCleanupPublicationBoundary(t *testing.T) {
 				t.Fatal("selected image was not retained")
 			}
 		})
+	}
+}
+
+func TestReliabilityImageCapPersistenceAndReset(t *testing.T) {
+	filename := reliabilityConfig(t)
+	syntheticCache(t)
+	syntheticImages(t)
+	requests := 0
+	http.DefaultClient = &http.Client{Transport: imageTransport(func(*http.Request) (*http.Response, error) {
+		requests++
+		resp := syntheticResponse(200, `{"code":5002}`)
+		resp.Header.Set("Content-Type", "application/json")
+		return resp, nil
+	})}
+	os.Mkdir(Config.Files.XMLTV, 0755) // cap must survive a later publication failure
+	if err := CreateXMLTV(filename); err == nil {
+		t.Fatal("expected guide write error")
+	}
+	if diskCache(t).ImageLimitUntil != imageLimitReset(time.Now()).Unix() || requests != 1 {
+		t.Fatalf("cap not saved, requests=%d", requests)
+	}
+	// A fresh invocation resets run state but must honor the persisted cap.
+	Cache.Open()
+	if _, err := Cache.prefetchImages(); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatal("cap was forgotten on next invocation")
+	}
+	Cache.ImageLimitUntil = time.Now().Add(-time.Second).Unix()
+	Cache.Save()
+	http.DefaultClient.Transport = imageTransport(func(*http.Request) (*http.Response, error) {
+		requests++
+		resp := syntheticResponse(200, "synthetic-image")
+		resp.Header.Set("Content-Type", "image/jpeg")
+		return resp, nil
+	})
+	if _, err := Cache.prefetchImages(); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 || imagesStopped() {
+		t.Fatalf("expired cap/run state did not reset: requests=%d", requests)
+	}
+}
+
+func TestReliabilityImageCapWorkersAndSaveFailure(t *testing.T) {
+	reliabilityConfig(t)
+	syntheticCache(t)
+	syntheticImages(t)
+	for i := 0; i < imageDownloadWorkers; i++ {
+		id := fmt.Sprintf("EP%012d", i+10)
+		Cache.Schedule["1"] = append(Cache.Schedule["1"], EPGoCache{ProgramID: id})
+		Cache.Metadata[id] = EPGoCache{Data: []Data{{URI: fmt.Sprintf("worker%d.jpg", i), Category: "Poster Art", Aspect: "16x9", Width: 640, Height: 360}}}
+	}
+	// First workers are all in flight when the cap arrives; serialize saves under
+	// imageMu and report a failed persistence attempt, rather than return success.
+	Config.Files.Cache = filepath.Join(t.TempDir(), "absent", "cache.json")
+	var mu sync.Mutex
+	requests := 0
+	gate := make(chan struct{})
+	http.DefaultClient = &http.Client{Transport: imageTransport(func(*http.Request) (*http.Response, error) {
+		mu.Lock()
+		requests++
+		if requests == imageDownloadWorkers {
+			close(gate)
+		}
+		mu.Unlock()
+		<-gate
+		resp := syntheticResponse(200, `{"code":5002}`)
+		resp.Header.Set("Content-Type", "application/json")
+		return resp, nil
+	})}
+	if _, err := Cache.prefetchImages(); err == nil {
+		t.Fatal("cap persistence error swallowed")
+	}
+	if requests != imageDownloadWorkers || !imagesStopped() {
+		t.Fatalf("requests=%d", requests)
 	}
 }
 

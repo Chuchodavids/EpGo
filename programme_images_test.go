@@ -233,14 +233,28 @@ func TestProgrammeImagesDownloadReuse(t *testing.T) {
 }
 
 func TestProgrammeImagesStopOnSDError(t *testing.T) {
-	for code := range sdImageStopCodes {
-		t.Run(fmt.Sprint(code), func(t *testing.T) {
+	// Any SD error except 5000 (one image not found), and throttling or
+	// authentication failures without an SD error, stop all image requests.
+	responses := map[string]func() *http.Response{}
+	for _, code := range []int{1004, 3000, 4001, 4006, 4010, 5002, 5003, 5004, 9999} {
+		body := fmt.Sprintf(`{"code":%d,"response":"STOP"}`, code)
+		responses[fmt.Sprint(code)] = func() *http.Response {
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}
+		}
+	}
+	for _, status := range []int{401, 403, 429} {
+		responses[fmt.Sprint("HTTP ", status)] = func() *http.Response {
+			return &http.Response{StatusCode: status, Status: fmt.Sprint(status), Header: http.Header{"Content-Type": {"text/html"}}, Body: io.NopCloser(strings.NewReader("<html>"))}
+		}
+	}
+	for name, response := range responses {
+		t.Run(name, func(t *testing.T) {
 			imageTestConfig(t)
 			c := readImageFixture(t, "testdata/programme-images.json")
 			requests := 0
 			http.DefaultClient.Transport = imageTransport(func(r *http.Request) (*http.Response, error) {
 				requests++
-				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(fmt.Sprintf(`{"code":%d,"response":"STOP"}`, code)))}, nil
+				return response(), nil
 			})
 			if got := c.GetImages("EP002061390830"); len(got) != 0 {
 				t.Fatalf("failed images must be omitted: %v", got)
@@ -274,6 +288,9 @@ func TestProgrammeImagesDownloadFailure(t *testing.T) {
 		requests++
 		if strings.Contains(r.URL.Path, "d73e774") {
 			return nil, fmt.Errorf("simulated transport failure")
+		}
+		if strings.Contains(r.URL.Path, "a") {
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"code":5000,"response":"IMAGE_NOT_FOUND"}`))}, nil
 		}
 		return &http.Response{StatusCode: 404, Status: "404 Not Found", Header: http.Header{"Content-Type": {"text/plain"}}, Body: io.NopCloser(strings.NewReader("not found"))}, nil
 	})

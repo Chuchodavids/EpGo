@@ -806,6 +806,7 @@ var imageDownloadsStopped bool
 // because images are downloaded in parallel.
 var imageFailures = map[string]error{}
 var imageMu sync.Mutex
+var imageStateError error
 
 func imagesStopped() bool {
 	imageMu.Lock()
@@ -836,21 +837,12 @@ func imageFilename(uri string) string {
 	return path.Base(uri)
 }
 
-// sdImageStopCodes are Schedules Direct error codes after which image
+// imageStopStatus are HTTP statuses without an SD error code after which image
 // downloads must stop for the current run.
-var sdImageStopCodes = map[int]bool{
-	1004: true, // TOKEN_MISSING
-	4001: true, // ACCOUNT_EXPIRED
-	4003: true, // INVALID_USER
-	4004: true, // ACCOUNT_LOCKOUT
-	4005: true, // JSON_ACCOUNT_ACCESS_DISABLED
-	4006: true, // TOKEN_EXPIRED
-	4007: true, // APPLICATION_DISABLED
-	4008: true, // ACCOUNT_INACTIVE
-	4009: true, // TOO_MANY_LOGINS
-	4010: true, // TOO_MANY_UNIQUE_IPS
-	5002: true, // MAX_IMAGE_DOWNLOADS
-	5003: true, // MAX_IMAGE_DOWNLOADS_TRIAL
+var imageStopStatus = map[int]bool{
+	http.StatusUnauthorized:    true,
+	http.StatusForbidden:       true,
+	http.StatusTooManyRequests: true,
 }
 
 // sdImageLimitCodes are the daily image limit errors. The limit stays reached
@@ -858,6 +850,7 @@ var sdImageStopCodes = map[int]bool{
 var sdImageLimitCodes = map[int]bool{
 	5002: true, // MAX_IMAGE_DOWNLOADS
 	5003: true, // MAX_IMAGE_DOWNLOADS_TRIAL
+	5004: true, // MAX_IMAGE_INVALID_URI_ERRORS (rolling 24h, see below)
 }
 
 // imageLimitReset returns when SD resets the daily image counter (00:00Z).
@@ -895,7 +888,7 @@ func fetchImage(uri string) (string, error) {
 	}
 
 	filename := imageFilename(uri)
-	if filename == "" || filename == "." || filename == "/" {
+	if filename == "" || filename == "." || filename == ".." || filename == "/" {
 		return "", fmt.Errorf("invalid image uri: %q", uri)
 	}
 	filePath := filepath.Join(folderImage, filename)
@@ -927,7 +920,10 @@ func fetchImage(uri string) (string, error) {
 	}
 	req.Header.Set("User-Agent", AppName)
 
-	resp, err := http.DefaultClient.Do(req)
+	// Copy the client to retain custom transports without an unbounded body read.
+	client := *http.DefaultClient
+	client.Timeout = 2 * time.Minute
+	resp, err := client.Do(req)
 	if err != nil {
 		return filename, fmt.Errorf("failed to download image %s: %w", filename, redactToken(err))
 	}
@@ -942,17 +938,32 @@ func fetchImage(uri string) (string, error) {
 			Response string `json:"response"`
 			Message  string `json:"message"`
 		}
-		if json.Unmarshal(body, &sdErr) == nil && sdErr.Code != 0 {
-			if sdImageStopCodes[sdErr.Code] {
-				imageMu.Lock()
-				imageDownloadsStopped = true
-				if sdImageLimitCodes[sdErr.Code] {
-					Cache.ImageLimitUntil = imageLimitReset(time.Now()).Unix()
+		sdCode := json.Unmarshal(body, &sdErr) == nil && sdErr.Code != 0
+		// Only a missing image is specific to one URI. Any other SD error, and
+		// throttling or authentication failures without one, affect all images.
+		if sdCode && sdErr.Code != 5000 || !sdCode && imageStopStatus[resp.StatusCode] {
+			imageMu.Lock()
+			imageDownloadsStopped = true
+			if sdImageLimitCodes[sdErr.Code] {
+				until := imageLimitReset(time.Now()).Unix()
+				if sdErr.Code == 5004 {
+					until = time.Now().Add(24 * time.Hour).Unix()
 				}
-				imageMu.Unlock()
-				logger.Warn("Schedules Direct returned an error, no more images will be requested in this run",
-					"code", sdErr.Code, "response", sdErr.Response, "message", sdErr.Message)
+				Cache.Lock()
+				changed := Cache.ImageLimitUntil != until
+				Cache.ImageLimitUntil = until
+				Cache.Unlock()
+				// Persist before another worker or a later generation can proceed.
+				// A failed XML write/termination must not forget the account cap.
+				if changed && Config.Files.Cache != "" {
+					imageStateError = Cache.Save()
+				}
 			}
+			imageMu.Unlock()
+			logger.Warn("Schedules Direct returned an error, no more images will be requested in this run",
+				"status", resp.StatusCode, "code", sdErr.Code, "response", sdErr.Response, "message", sdErr.Message)
+		}
+		if sdCode {
 			return filename, fmt.Errorf("schedules direct error %d (%s) for image %s", sdErr.Code, sdErr.Response, filename)
 		}
 		return filename, fmt.Errorf("unexpected response for image %s: %s, content type %q", filename, resp.Status, resp.Header.Get("Content-Type"))

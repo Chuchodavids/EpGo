@@ -27,6 +27,7 @@ func (c *cache) prefetchImagesWithNetwork(allowNetwork bool) (int, error) {
 	imageMu.Lock()
 	imageDownloadsStopped = !allowNetwork
 	imageFailures = map[string]error{}
+	imageStateError = nil
 	imageMu.Unlock()
 	seen := make(map[string]bool)
 	var uris []string
@@ -108,5 +109,8 @@ func (c *cache) prefetchImagesWithNetwork(allowNetwork bool) (int, error) {
 	wg.Wait()
 	logger.Info("Images downloaded", "done", done, "failed", failed, "images", len(uris), "stopped", imagesStopped())
 
-	return len(seen), nil
+	imageMu.Lock()
+	err := imageStateError
+	imageMu.Unlock()
+	return len(seen), err
 }
