@@ -163,6 +163,17 @@ func (sd *SD) Init() (err error) {
 		return
 	}
 
+	sd.ScheduleMD5 = func() (err error) {
+
+		sd.Req.URL = fmt.Sprintf("%sschedules/md5", sd.BaseURL)
+		sd.Req.Type = "POST"
+		sd.Req.Call = "schedulemd5"
+		// Large lineups must transfer within the client timeout.
+		sd.Req.Compression = true
+
+		return sd.Connect()
+	}
+
 	sd.Program = func() (err error) {
 
 		sd.Req.Type = "POST"
@@ -353,7 +364,7 @@ func (sd *SD) connectOnce() (err error) {
 		}
 		sd.Resp.Body = body
 
-	case "schedule", "program":
+	case "schedule", "schedulemd5", "program":
 		sd.Resp.Body = body
 
 	}

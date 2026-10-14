@@ -380,6 +380,7 @@ func (c *cache) Open() (err error) {
 	defer c.Unlock()
 	c.Channel, c.Program, c.Metadata, c.Schedule = loaded.Channel, loaded.Program, loaded.Metadata, loaded.Schedule
 	c.Token, c.TokenExpires, c.ImageLimitUntil = loaded.Token, loaded.TokenExpires, loaded.ImageLimitUntil
+	c.ScheduleMd5 = loaded.ScheduleMd5
 
 	return
 }

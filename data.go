@@ -108,6 +108,17 @@ func (sd *SD) GetData() error {
 	for i := range days {
 		days[i] = now.AddDate(0, 0, i).Format("2006-01-02")
 	}
+	previousMd5 := Cache.ScheduleMd5
+	Cache.ScheduleMd5 = make(map[string]map[string]string)
+	keepMd5 := func(key scheduleKey, md5 string) {
+		if md5 == "" {
+			return
+		}
+		if Cache.ScheduleMd5[key.station] == nil {
+			Cache.ScheduleMd5[key.station] = make(map[string]string)
+		}
+		Cache.ScheduleMd5[key.station][key.date] = md5
+	}
 	freshDays := make(map[scheduleKey]bool)
 	for start := 0; start < len(Config.Station); start += 5000 {
 		end := min(start+5000, len(Config.Station))
@@ -115,17 +126,54 @@ func (sd *SD) GetData() error {
 		for i := range channels {
 			channels[i].Date = days
 		}
-		var err error
-		sd.Req.Data, err = json.Marshal(channels)
-		if err != nil {
-			return err
+
+		// Only download the days whose schedule changed since it was cached.
+		var unchanged map[scheduleKey]string
+		err := sd.update.FetchStopped
+		if err == nil {
+			if sd.Req.Data, err = json.Marshal(channels); err != nil {
+				return err
+			}
+			err = sd.ScheduleMD5()
+			if err == nil {
+				unchanged, err = unchangedSchedules(sd.Resp.Body, channels, previousMd5)
+			}
+			if err != nil {
+				if stopFetching(err) {
+					sd.update.FetchStopped = err
+				}
+				logger.Warn("Schedule md5 unavailable; downloading changed days", "error", err)
+			}
 		}
+		// The md5 only describes the cache if the cached day still has airings.
+		for key := range unchanged {
+			if len(cachedDay(previousSchedules[key.station], key.date)) == 0 {
+				delete(unchanged, key)
+			}
+		}
+		var request []channel
+		for _, ch := range channels {
+			var dates []string
+			for _, day := range ch.Date {
+				if _, ok := unchanged[scheduleKey{ch.ID, day}]; !ok {
+					dates = append(dates, day)
+				}
+			}
+			if len(dates) > 0 {
+				ch.Date = dates
+				request = append(request, ch)
+			}
+		}
+
 		fresh, rangeEnds := map[scheduleKey]SDSchedule{}, map[scheduleKey]bool{}
 		err = sd.update.FetchStopped
-		if err == nil {
+		if err == nil && len(request) > 0 {
+			if sd.Req.Data, err = json.Marshal(request); err != nil {
+				return err
+			}
 			err = sd.Schedule()
 			if err == nil {
-				fresh, rangeEnds, err = selectSchedules(sd.Resp.Body, channels)
+				fresh, rangeEnds, err = selectSchedules(sd.Resp.Body, request)
 			}
 		}
 		if err != nil {
@@ -137,25 +185,28 @@ func (sd *SD) GetData() error {
 		for _, ch := range channels {
 			for _, day := range days {
 				key := scheduleKey{ch.ID, day}
+				if md5, ok := unchanged[key]; ok {
+					Cache.Schedule[ch.ID] = append(Cache.Schedule[ch.ID], cachedDay(previousSchedules[ch.ID], day)...)
+					keepMd5(key, md5)
+					freshDays[key] = true
+					sd.update.UnchangedScheduleDays++
+					continue
+				}
 				if schedule, ok := fresh[key]; ok {
 					body, err := json.Marshal([]SDSchedule{schedule})
 					if err != nil {
 						return err
 					}
 					Cache.AddSchedule(&body)
+					keepMd5(key, schedule.Metadata.Md5)
 					freshDays[key] = true
 					sd.update.FreshScheduleDays++
 					continue
 				}
-				var fallback []EPGoCache
-				for _, airing := range previousSchedules[ch.ID] {
-					if airingDate(airing) == day && airing.ProgramID != "" && !airing.AirDateTime.IsZero() && airing.Duration > 0 {
-						airing.ScheduleDate = day
-						fallback = append(fallback, airing)
-					}
-				}
+				fallback := cachedDay(previousSchedules[ch.ID], day)
 				if len(fallback) > 0 {
 					Cache.Schedule[ch.ID] = append(Cache.Schedule[ch.ID], fallback...)
+					keepMd5(key, previousMd5[ch.ID][day])
 					sd.update.CachedScheduleDays++
 				} else if !rangeEnds[key] {
 					sd.update.MissingScheduleDays++
@@ -248,7 +299,9 @@ func (sd *SD) GetData() error {
 		for _, airing := range airings {
 			// A fresh late-night event may overlap tomorrow's cached schedule.
 			// Prefer the fresh event without inventing new timings for stale ones.
-			if !freshDays[scheduleKey{station, airingDate(airing)}] && overlapsAny(airing, fresh) {
+			if day := airingDate(airing); !freshDays[scheduleKey{station, day}] && overlapsAny(airing, fresh) {
+				// The cached day no longer matches its md5; download it again.
+				delete(Cache.ScheduleMd5[station], day)
 				continue
 			}
 			merged = append(merged, airing)
@@ -257,4 +310,15 @@ func (sd *SD) GetData() error {
 		Cache.Schedule[station] = merged
 	}
 	return Cache.Save()
+}
+
+// cachedDay returns the usable cached airings of one station/date.
+func cachedDay(airings []EPGoCache, day string) (cached []EPGoCache) {
+	for _, airing := range airings {
+		if airingDate(airing) == day && airing.ProgramID != "" && !airing.AirDateTime.IsZero() && airing.Duration > 0 {
+			airing.ScheduleDate = day
+			cached = append(cached, airing)
+		}
+	}
+	return
 }

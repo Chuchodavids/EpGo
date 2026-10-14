@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -19,6 +20,8 @@ import (
 // reliabilityConfig installs a transport which rejects any unhandled request.
 type partialSource struct {
 	schedules       string
+	scheduleMd5     string
+	scheduleBodies  []string
 	programs        string
 	metadata        string
 	status          map[string]int
@@ -48,7 +51,14 @@ func (s *partialSource) install(t *testing.T) {
 			b, _ := json.Marshal(map[string]any{"stations": stations})
 			body = string(b)
 		case "schedules":
+			b, _ := io.ReadAll(r.Body)
+			s.scheduleBodies = append(s.scheduleBodies, string(b))
 			body = s.schedules
+		case "schedules/md5":
+			body = s.scheduleMd5
+			if body == "" {
+				body = "{}"
+			}
 		case "programs":
 			var ids []string
 			if err := json.NewDecoder(r.Body).Decode(&ids); err != nil {
@@ -586,5 +596,178 @@ func TestPartialUpdateProgrammeCorrectionWithCachedSchedule(t *testing.T) {
 	}
 	if p := partialGuide(t); len(p) != 1 || p[0].Title[0].Value != "Recovered programme correction" {
 		t.Fatal("useful programme correction was blocked by schedule failure")
+	}
+}
+
+func TestScheduleMd5SkipsUnchangedDays(t *testing.T) {
+	filename := reliabilityConfig(t)
+	Config.Options.Schedule = 2
+	Config.Station = []channel{{ID: "1", Lineup: "TEST"}}
+	if err := Config.Save(); err != nil {
+		t.Fatal(err)
+	}
+	Cache.Init()
+	Cache.Token, Cache.TokenExpires = "synthetic-token", time.Now().Add(24*time.Hour).Unix()
+	if err := Cache.Save(); err != nil {
+		t.Fatal(err)
+	}
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	tomorrow := today.AddDate(0, 0, 1)
+	day := func(d time.Time, md5, id string) string {
+		return fmt.Sprintf(`{"stationID":"1","programs":[%s],"metadata":{"startDate":%q,"md5":%q}}`,
+			partialAiring(id, "p", d.Add(12*time.Hour), 3600), d.Format("2006-01-02"), md5)
+	}
+	md5s := func(a, b string) string {
+		return fmt.Sprintf(`{"1":{%q:{"code":0,"md5":%q},%q:{"code":0,"md5":%q}}}`, today.Format("2006-01-02"), a, tomorrow.Format("2006-01-02"), b)
+	}
+	source := &partialSource{
+		schedules: "[" + day(today, "today-1", "EP000000010001") + "," + day(tomorrow, "tomorrow-1", "EP000000010002") + "]",
+		programs:  "[" + partialProgram("EP000000010001", "p", "Today") + "," + partialProgram("EP000000010002", "p", "Tomorrow") + "]",
+	}
+	source.install(t)
+	var sd SD
+	if err := sd.Update(filename); err != nil {
+		t.Fatal(err)
+	}
+	if got := diskCache(t).ScheduleMd5["1"]; got[today.Format("2006-01-02")] != "today-1" || got[tomorrow.Format("2006-01-02")] != "tomorrow-1" {
+		t.Fatalf("schedule md5 not cached: %v", got)
+	}
+
+	// Only tomorrow changed: today comes from the cache.
+	source.scheduleMd5 = md5s("today-1", "tomorrow-2")
+	source.schedules = "[" + day(tomorrow, "tomorrow-2", "EP000000010003") + "]"
+	source.programs = "[" + partialProgram("EP000000010003", "p", "Tomorrow changed") + "]"
+	source.scheduleBodies = nil
+	var logs bytes.Buffer
+	logger = slog.New(slog.NewTextHandler(&logs, nil))
+	if err := sd.Update(filename); err != nil {
+		t.Fatal(err)
+	}
+	if len(source.scheduleBodies) != 1 || strings.Contains(source.scheduleBodies[0], today.Format("2006-01-02")) || !strings.Contains(source.scheduleBodies[0], tomorrow.Format("2006-01-02")) {
+		t.Fatalf("unchanged day requested again: %v", source.scheduleBodies)
+	}
+	titles := map[string]bool{}
+	for _, p := range partialGuide(t) {
+		titles[p.Title[0].Value] = true
+	}
+	if len(titles) != 2 || !titles["Today"] || !titles["Tomorrow changed"] {
+		t.Fatalf("guide = %v", titles)
+	}
+	if !strings.Contains(logs.String(), "unchanged_schedule_days=1") || strings.Contains(logs.String(), "with gaps") {
+		t.Fatalf("unchanged day reported as a gap: %s", &logs)
+	}
+
+	// Nothing changed: no schedule download, the guide is still published.
+	source.scheduleMd5 = md5s("today-1", "tomorrow-2")
+	calls := source.calls["schedules"]
+	if err := sd.Update(filename); err != nil {
+		t.Fatal(err)
+	}
+	if source.calls["schedules"] != calls || len(partialGuide(t)) != 2 {
+		t.Fatalf("schedules requested %d times, guide %v", source.calls["schedules"]-calls, partialGuide(t))
+	}
+}
+
+func md5TestSetup(t *testing.T) (string, time.Time, time.Time) {
+	t.Helper()
+	filename := reliabilityConfig(t)
+	Config.Options.Schedule = 2
+	Config.Station = []channel{{ID: "1", Lineup: "TEST"}}
+	if err := Config.Save(); err != nil {
+		t.Fatal(err)
+	}
+	Cache.Init()
+	Cache.Token, Cache.TokenExpires = "synthetic-token", time.Now().Add(24*time.Hour).Unix()
+	if err := Cache.Save(); err != nil {
+		t.Fatal(err)
+	}
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	return filename, today, today.AddDate(0, 0, 1)
+}
+
+func md5Day(d time.Time, md5 string, airings ...string) string {
+	return fmt.Sprintf(`{"stationID":"1","programs":[%s],"metadata":{"startDate":%q,"md5":%q}}`, strings.Join(airings, ","), d.Format("2006-01-02"), md5)
+}
+
+func md5Response(entries map[time.Time]string) string {
+	var days []string
+	for d, e := range entries {
+		days = append(days, fmt.Sprintf("%q:%s", d.Format("2006-01-02"), e))
+	}
+	return `{"1":{` + strings.Join(days, ",") + `}}`
+}
+
+func TestScheduleMd5RefetchesPrunedDay(t *testing.T) {
+	filename, today, tomorrow := md5TestSetup(t)
+	source := &partialSource{
+		schedules: "[" + md5Day(today, "T1", partialAiring("EP000000010001", "p", today.Add(12*time.Hour), 3600)) + "," +
+			md5Day(tomorrow, "D1", partialAiring("EP000000010002", "p", tomorrow, 3600)) + "]",
+		programs: "[" + partialProgram("EP000000010001", "p", "Today") + "," + partialProgram("EP000000010002", "p", "Tomorrow") + "]",
+	}
+	source.install(t)
+	var sd SD
+	if err := sd.Update(filename); err != nil {
+		t.Fatal(err)
+	}
+
+	// Tomorrow is queued and falls back to the cache; today's fresh late event
+	// overlaps and removes tomorrow's cached first airing.
+	source.scheduleMd5 = md5Response(map[time.Time]string{today: `{"code":0,"md5":"T2"}`, tomorrow: `{"code":0,"md5":"D2"}`})
+	source.schedules = "[" + md5Day(today, "T2", partialAiring("EP000000010003", "p", today.Add(23*time.Hour), 7200)) + "," +
+		fmt.Sprintf(`{"stationID":"1","code":7100,"requestedDate":%q}]`, tomorrow.Format("2006-01-02"))
+	source.programs = "[" + partialProgram("EP000000010003", "p", "Late") + "]"
+	if err := sd.Update(filename); err != nil {
+		t.Fatal(err)
+	}
+	if md5, ok := diskCache(t).ScheduleMd5["1"][tomorrow.Format("2006-01-02")]; ok {
+		t.Fatalf("pruned day kept md5 %q", md5)
+	}
+
+	// SD's md5 for tomorrow is back to the cached one: it must still be downloaded.
+	source.scheduleMd5 = md5Response(map[time.Time]string{today: `{"code":0,"md5":"T2"}`, tomorrow: `{"code":0,"md5":"D1"}`})
+	source.schedules = "[" + md5Day(tomorrow, "D1", partialAiring("EP000000010002", "p", tomorrow, 3600)) + "]"
+	source.scheduleBodies = nil
+	if err := sd.Update(filename); err != nil {
+		t.Fatal(err)
+	}
+	if len(source.scheduleBodies) != 1 || !strings.Contains(source.scheduleBodies[0], tomorrow.Format("2006-01-02")) || strings.Contains(source.scheduleBodies[0], today.Format("2006-01-02")) {
+		t.Fatalf("schedule requests = %v", source.scheduleBodies)
+	}
+}
+
+func TestScheduleMd5EmptyCachedDayIsDownloaded(t *testing.T) {
+	filename, today, tomorrow := md5TestSetup(t)
+	Cache.ScheduleMd5 = map[string]map[string]string{"1": {today.Format("2006-01-02"): "T1", tomorrow.Format("2006-01-02"): "D1"}}
+	if err := Cache.Save(); err != nil {
+		t.Fatal(err)
+	}
+	source := &partialSource{
+		scheduleMd5: md5Response(map[time.Time]string{today: `{"code":0,"md5":"T1"}`, tomorrow: `{"code":0,"md5":"D1"}`}),
+		schedules: "[" + md5Day(today, "T1", partialAiring("EP000000010001", "p", today.Add(12*time.Hour), 3600)) + "," +
+			md5Day(tomorrow, "D1", partialAiring("EP000000010002", "p", tomorrow.Add(12*time.Hour), 3600)) + "]",
+		programs: "[" + partialProgram("EP000000010001", "p", "Today") + "," + partialProgram("EP000000010002", "p", "Tomorrow") + "]",
+	}
+	source.install(t)
+	var sd SD
+	if err := sd.Update(filename); err != nil {
+		t.Fatal(err)
+	}
+	if source.calls["schedules"] != 1 || len(partialGuide(t)) != 2 {
+		t.Fatalf("days without cached airings were not downloaded: %v", source.scheduleBodies)
+	}
+}
+
+func TestScheduleMd5NestedErrorStopsRequests(t *testing.T) {
+	filename, today, tomorrow := md5TestSetup(t)
+	source := &partialSource{
+		scheduleMd5: md5Response(map[time.Time]string{today: `{"code":4001,"message":"expired"}`, tomorrow: `{"code":0,"md5":"D1"}`}),
+	}
+	source.install(t)
+	var sd SD
+	if err := sd.Update(filename); err == nil {
+		t.Fatal("update without any data must fail")
+	}
+	if source.calls["schedules"] != 0 || source.calls["programs"] != 0 || source.calls["metadata/programs/"] != 0 {
+		t.Fatalf("requests after an account error: %v", source.calls)
 	}
 }

@@ -139,15 +139,16 @@ type SD struct {
 	}
 
 	// SD API Calls
-	Login     func() (err error)
-	Status    func() (err error)
-	Countries func() (err error)
-	Headends  func() (err error)
-	Lineups   func() (err error)
-	Delete    func() (err error)
-	Channels  func() (err error)
-	Schedule  func() (err error)
-	Program   func() (err error)
+	Login       func() (err error)
+	Status      func() (err error)
+	Countries   func() (err error)
+	Headends    func() (err error)
+	Lineups     func() (err error)
+	Delete      func() (err error)
+	Channels    func() (err error)
+	Schedule    func() (err error)
+	ScheduleMD5 func() (err error)
+	Program     func() (err error)
 }
 
 // Station : Station SD API

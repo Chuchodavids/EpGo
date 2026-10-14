@@ -18,6 +18,10 @@ type cache struct {
 	// earlier run reached the limit. No images are requested before then.
 	ImageLimitUntil int64 `json:"ImageLimitUntil,omitempty"`
 
+	// ScheduleMd5 is the SD md5 of each cached station/date schedule. Days
+	// whose md5 did not change are not downloaded again.
+	ScheduleMd5 map[string]map[string]string `json:"ScheduleMd5,omitempty"`
+
 	sync.RWMutex `json:"-"`
 }
 
@@ -139,6 +143,7 @@ type SDSchedule struct {
 	StationID string `json:"stationID"`
 	Metadata  struct {
 		StartDate string `json:"startDate"`
+		Md5       string `json:"md5"`
 		Code      int    `json:"code"`
 	} `json:"metadata"`
 }

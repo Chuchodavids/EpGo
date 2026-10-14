@@ -9,7 +9,8 @@ import (
 type scheduleKey struct{ station, date string }
 
 type updateSummary struct {
-	FreshScheduleDays, CachedScheduleDays, MissingScheduleDays        int
+	FreshScheduleDays, UnchangedScheduleDays                          int
+	CachedScheduleDays, MissingScheduleDays                           int
 	CachedPrograms, MissingPrograms, MetadataFailures, LineupFailures int
 	FetchStopped                                                      error
 }
@@ -20,7 +21,8 @@ func (s updateSummary) log() {
 	if s.FetchStopped != nil || s.CachedScheduleDays+s.MissingScheduleDays+s.CachedPrograms+s.MissingPrograms+s.MetadataFailures+s.LineupFailures > 0 {
 		log, message = logger.Warn, "EPG update published with gaps"
 	}
-	log(message, "fresh_schedule_days", s.FreshScheduleDays, "cached_schedule_days", s.CachedScheduleDays,
+	log(message, "fresh_schedule_days", s.FreshScheduleDays, "unchanged_schedule_days", s.UnchangedScheduleDays,
+		"cached_schedule_days", s.CachedScheduleDays,
 		"missing_schedule_days", s.MissingScheduleDays, "cached_programs", s.CachedPrograms,
 		"missing_programs", s.MissingPrograms, "metadata_failures", s.MetadataFailures, "lineup_failures", s.LineupFailures,
 		"fetch_stopped", s.FetchStopped)
@@ -77,6 +79,47 @@ func overlapsAny(p EPGoCache, fresh []EPGoCache) bool {
 		}
 	}
 	return false
+}
+
+// unchangedSchedules returns the requested station/date schedules whose md5 in
+// a schedules/md5 response equals the md5 of the cached schedule. Days with
+// other results are downloaded. Like selectSchedules, it returns an error for
+// nested codes that must stop further requests.
+func unchangedSchedules(body []byte, requested []channel, cached map[string]map[string]string) (map[scheduleKey]string, error) {
+	var stations map[string]json.RawMessage
+	if err := json.Unmarshal(body, &stations); err != nil {
+		return nil, err
+	}
+	unchanged := make(map[scheduleKey]string)
+	var stop error
+	for _, c := range requested {
+		var station struct {
+			Code int `json:"code"`
+		}
+		if json.Unmarshal(stations[c.ID], &station) == nil && station.Code != 0 {
+			if stopFetching(&sdAPIError{Code: station.Code}) {
+				stop = &sdAPIError{Code: station.Code}
+			}
+			continue
+		}
+		var days map[string]struct {
+			Code int    `json:"code"`
+			Md5  string `json:"md5"`
+		}
+		if json.Unmarshal(stations[c.ID], &days) != nil {
+			continue
+		}
+		for _, date := range c.Date {
+			d, ok := days[date]
+			if ok && d.Code != 0 && stopFetching(&sdAPIError{Code: d.Code}) {
+				stop = &sdAPIError{Code: d.Code}
+			}
+			if ok && d.Code == 0 && d.Md5 != "" && cached[c.ID][date] == d.Md5 {
+				unchanged[scheduleKey{c.ID, date}] = d.Md5
+			}
+		}
+	}
+	return unchanged, stop
 }
 
 // Validate each station/date independently. Missing, malformed or duplicate
