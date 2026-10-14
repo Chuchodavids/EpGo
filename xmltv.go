@@ -156,10 +156,14 @@ func getProgram(channel EPGoCache) (p []Programme) {
 			}
 
 			// Sub Title
-			pro.SubTitle = Cache.GetSubTitle(s.ProgramID, pro.SubTitle.Value)
+			pro.SubTitle = Cache.GetSubTitle(s.ProgramID, lang)
 
 			// Description
-			pro.Desc = Cache.GetDescs(s.ProgramID, pro.SubTitle.Value)
+			var subTitle string
+			if pro.SubTitle != nil {
+				subTitle = pro.SubTitle.Value
+			}
+			pro.Desc = Cache.GetDescs(s.ProgramID, subTitle)
 
 			// Credits
 			pro.Credits = Cache.GetCredits(s.ProgramID)

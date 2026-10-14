@@ -11,7 +11,9 @@ import (
 
 var Token string
 
-const tokensafeMargin = 5 * time.Minute
+// tokensafeMargin must cover a whole run, including image downloads that can
+// take tens of minutes.
+const tokensafeMargin = time.Hour
 
 // Init : Init Schedules Direct
 func (sd *SD) Init() (err error) {
@@ -224,21 +226,25 @@ func (sd *SD) Connect() (err error) {
 		}
 		t := time.Unix(sd.Resp.Login.TokenExpires, 0)
 		logger.Info("", "Token Expires", t)
-		if t.Before(time.Now()) {
-			logger.Error("Token has expired")
+		// Without newToken the API returns the existing token, even if it
+		// expires a few seconds later.
+		if t.Before(time.Now().Add(tokensafeMargin)) {
 			var data map[string]interface{}
 			err = json.Unmarshal(sd.Req.Data, &data)
 			if err != nil {
 				logger.Error("could not unmarshal request data to add newToken", "error", err)
 				return err
 			}
-			data["newToken"] = true
-			sd.Req.Data, err = json.Marshal(data)
-			if err != nil {
-				logger.Error("could not marshal request data with newToken", "error", err)
-				return err
+			if data["newToken"] != true {
+				logger.Info("Token expires too soon, requesting a new token")
+				data["newToken"] = true
+				sd.Req.Data, err = json.Marshal(data)
+				if err != nil {
+					logger.Error("could not marshal request data with newToken", "error", err)
+					return err
+				}
+				return sd.Connect()
 			}
-			sd.Connect()
 		}
 		sdStatus.Code = sd.Resp.Login.Code
 		sdStatus.Message = sd.Resp.Login.Message

@@ -162,6 +162,7 @@ Options:
     Live and New icons: false
     Schedule Days: 1
     Subtitle into Description: false
+    Subtitle only from episode titles: false
     Insert credits tag into XML file: false
     Images:
         Download Images from Schedules Direct: false
@@ -249,6 +250,16 @@ Alan zieht aus, da seine Freundin Kandi und er in Las Vegas eine Million Dollar 
 
 ---
 
+```yaml
+Subtitle only from episode titles: false
+```
+
+Schedules Direct only has episode titles for some programmes. For the others, EPGo uses the short description as the subtitle.
+
+**true:** The subtitle is only set from the episode title. Programmes without one get no subtitle. Useful for clients that use the subtitle in recording file names or for duplicate detection.
+
+---
+
 ### Images: (Can be customized)
 
 ```yaml
@@ -278,7 +289,7 @@ The TMDB cache file (default: `config_tmdb_cache.json`) persists search results 
 Insert credits tag into XML file: false
 ```
 
-**true:** Adds the credits (director, actor, producer, writer) to the program information, if available.
+**true:** Adds the credits (director, actor, writer, producer, presenter, guest) to the program information, if available. Hosts and anchors are written as presenters; guests, contestants and people appearing as themselves as guests.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>

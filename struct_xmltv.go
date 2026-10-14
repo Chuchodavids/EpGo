@@ -9,13 +9,13 @@ type Programme struct {
 	Start   string   `xml:"start,attr"`
 	Stop    string   `xml:"stop,attr"`
 
-	Title    []Title  `xml:"title"`
-	SubTitle SubTitle `xml:"sub-title"`
+	Title    []Title   `xml:"title"`
+	SubTitle *SubTitle `xml:"sub-title,omitempty"`
 
 	Desc []Desc `xml:"desc"`
 
 	// Credits
-	Credits Credits `xml:"credits,omitempty"`
+	Credits *Credits `xml:"credits,omitempty"`
 
 	Categorys   []Category   `xml:"category,omitempty"`
 	Language    string       `xml:"language,omitempty"`
@@ -70,13 +70,18 @@ type Desc struct {
 	Lang  string `xml:"lang,attr"`
 }
 
-// Credits : Credits
+// Credits : Credits, in the element order of the XMLTV DTD
 type Credits struct {
 	Director  []Director  `xml:"director,omitempty"`
 	Actor     []Actor     `xml:"actor,omitempty"`
+	Writer    []Writer    `xml:"writer,omitempty"`
 	Producer  []Producer  `xml:"producer,omitempty"`
 	Presenter []Presenter `xml:"presenter,omitempty"`
-	Writer    []Writer    `xml:"writer,omitempty"`
+	Guest     []Guest     `xml:"guest,omitempty"`
+}
+
+type Guest struct {
+	Value string `xml:",chardata"`
 }
 
 type Director struct {
