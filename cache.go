@@ -646,6 +646,9 @@ func (c *cache) GetEpisodeNum(id string) (ep []EpisodeNum) {
 
 		for _, m := range p.Metadata {
 
+			if m.Gracenote.Season <= 0 || m.Gracenote.Episode <= 0 {
+				continue
+			}
 			seaseon = m.Gracenote.Season
 			episode = m.Gracenote.Episode
 
@@ -656,6 +659,7 @@ func (c *cache) GetEpisodeNum(id string) (ep []EpisodeNum) {
 				episodeNum.Value = fmt.Sprintf("%d.%d.", seaseon-1, episode-1)
 				episodeNum.System = "xmltv_ns"
 				ep = append(ep, episodeNum)
+				break
 			}
 
 		}
@@ -669,31 +673,18 @@ func (c *cache) GetEpisodeNum(id string) (ep []EpisodeNum) {
 
 		}
 
-		// ✅ Fixed dd_progid formatting
-		if len(ep) == 0 {
-
-			var episodeNum EpisodeNum
-
-			switch id[0:2] {
-
-			case "EP":
-				// Correct format: keep prefix, add dot + episode part if present
-				if len(id) > 10 {
-					episodeNum.Value = fmt.Sprintf("%s.%s", id[:10], id[10:])
-				} else {
-					episodeNum.Value = id + ".0000"
-				}
-
-			case "SH", "MV":
-				episodeNum.Value = id + ".0000"
-
-			default:
-				episodeNum.Value = id
+		// Identity is independent of season/episode display metadata. Do not
+		// change it when late-arriving Gracenote numbering becomes available.
+		if id != "" {
+			value := id
+			if len(id) > 10 {
+				value = id[:10] + "." + id[10:]
+			} else if strings.HasPrefix(id, "EP") || strings.HasPrefix(id, "SH") || strings.HasPrefix(id, "MV") {
+				value += ".0000"
 			}
-
-			episodeNum.System = "dd_progid"
-			ep = append(ep, episodeNum)
-
+			// TVHeadend parses tags in order: dd_progid supplies an episode
+			// ordinal, so actual season/episode numbering must follow it.
+			ep = append([]EpisodeNum{{System: "dd_progid", Value: value}}, ep...)
 		}
 
 		if len(p.OriginalAirDate) > 0 {

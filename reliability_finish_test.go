@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -352,5 +354,54 @@ func TestReliabilityScheduleDocumentedShapes(t *testing.T) {
 		if good, rangeEnds, err := selectSchedules([]byte(body), []channel{{ID: "1", Date: []string{today}}}); err != nil || len(good) != 0 || len(rangeEnds) != 0 {
 			t.Fatalf("invalid schedule accepted or escalated to global failure: %s (err=%v)", body, err)
 		}
+	}
+}
+
+func TestReliabilityMetadataIdentityAcrossRefreshAndAirings(t *testing.T) {
+	reliabilityConfig(t)
+	syntheticCache(t)
+	id := "EP000000010001"
+	oldIdentity := Cache.GetEpisodeNum(id)[0]
+	Cache.Schedule["1"] = append(Cache.Schedule["1"], Cache.Schedule["1"][0])
+	Cache.Schedule["1"][1].AirDateTime = Cache.Schedule["1"][0].AirDateTime.Add(time.Hour)
+	for i := range Cache.Schedule["1"] {
+		Cache.Schedule["1"][i].Md5 = "new"
+	}
+	if ids := Cache.GetRequiredProgramIDs(); len(ids) != 1 || ids[0] != id {
+		t.Fatalf("repeat refresh not deduplicated: %v", ids)
+	}
+	body := []byte(`[{"programID":"EP000000010001","md5":"new","titles":[{"title120":"Synthetic series"}],"episodeTitle150":"Synthetic episode","descriptions":{"description1000":[{"description":"Synthetic long description","descriptionLanguage":"en"}]},"metadata":[{"Gracenote":{"season":2,"episode":3}},{"TVMaze":{"season":9,"episode":99}}]}]`)
+	if good, _, err := selectPrograms(body, []string{id}, false); err != nil || len(good) != 1 {
+		t.Fatalf("good=%d err=%v", len(good), err)
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	Cache.AddProgram(&body, &wg)
+	wg.Wait()
+	if len(Cache.GetRequiredProgramIDs()) != 0 {
+		t.Fatal("refreshed programme still requested")
+	}
+	programmes := getProgram(Cache.Channel["1"])
+	if len(programmes) != 2 || programmes[0].Start == programmes[1].Start {
+		t.Fatal("repeated airings lost")
+	}
+	for _, p := range programmes {
+		if p.SubTitle == nil || p.SubTitle.Value != "Synthetic episode" || len(p.Desc) != 1 || p.Desc[0].Value != "Synthetic long description" {
+			t.Fatal("metadata semantics lost")
+		}
+		if len(p.EpisodeNums) < 3 || p.EpisodeNums[0] != oldIdentity || p.EpisodeNums[1].System != "xmltv_ns" || p.EpisodeNums[1].Value != "1.2." || p.EpisodeNums[2].Value != "S2 E3" {
+			t.Fatalf("identity/order/numbering: %+v", p.EpisodeNums)
+		}
+		out, err := xml.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Index(string(out), `system="dd_progid"`) > strings.Index(string(out), `system="xmltv_ns"`) {
+			t.Fatal("TVH would overwrite true episode with dd ordinal")
+		}
+	}
+	var decoded []SDProgram
+	if err := json.Unmarshal(body, &decoded); err != nil || len(decoded) != 1 {
+		t.Fatal(err)
 	}
 }

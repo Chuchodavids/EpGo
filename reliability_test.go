@@ -232,3 +232,21 @@ func TestReliabilityLoginRejectsResultErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestReliabilityProgramIdentity(t *testing.T) {
+	reliabilityConfig(t)
+	var c cache
+	json.Unmarshal([]byte(`{"Program":{"EP000000010001":{"metadata":[{"Gracenote":{"season":2,"episode":3}},{"TVMaze":{"season":2,"episode":3}}]},"MV000000020000":{},"SH000000030000":{}}}`), &c)
+	for id, want := range map[string]string{"EP000000010001": "EP00000001.0001", "MV000000020000": "MV00000002.0000", "SH000000030000": "SH00000003.0000"} {
+		nums := c.GetEpisodeNum(id)
+		found := false
+		for _, num := range nums {
+			if num.System == "dd_progid" && num.Value == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: missing stable dd_progid %s: %+v", id, want, nums)
+		}
+	}
+}
