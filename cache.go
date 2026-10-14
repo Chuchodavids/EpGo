@@ -139,7 +139,7 @@ func (c *cache) AddProgram(gzip *[]byte, wg *sync.WaitGroup) {
 		wg.Done()
 	}()
 
-	b, err := gUnzip(*gzip)
+	b, err := decodeSDPayload(*gzip)
 	if err != nil {
 		logger.Error("unable to unzip programs", "error", err)
 		return
@@ -187,7 +187,7 @@ func (c *cache) AddMetadata(gzip *[]byte, wg *sync.WaitGroup) {
 		wg.Done()
 	}()
 
-	b, err := gUnzip(*gzip)
+	b, err := decodeSDPayload(*gzip)
 	if err != nil {
 		logger.Error("unable to unzip metadata", "error", err)
 		return
@@ -404,7 +404,20 @@ func (c *cache) Save() (err error) {
 	return
 }
 
-func (c *cache) CleanUp() {
+// A token can expire during a staged fetch. Persist credentials without
+// publishing the in-progress schedules/programs along with them.
+func (c *cache) saveToken() error {
+	var committed cache
+	if err := committed.Open(); err != nil {
+		return err
+	}
+	c.RLock()
+	committed.Token, committed.TokenExpires = c.Token, c.TokenExpires
+	c.RUnlock()
+	return committed.Save()
+}
+
+func (c *cache) CleanUp() error {
 
 	var count int
 	logger.Info("Clean up Cache", "filename", Config.Files.Cache)
@@ -428,11 +441,7 @@ func (c *cache) CleanUp() {
 
 	logger.Info("Clean up Cache", "count", count)
 
-	err := c.Save()
-	if err != nil {
-		logger.Error("unable to save the JSON", "error", err)
-		return
-	}
+	return c.Save()
 }
 
 // Get data from cache

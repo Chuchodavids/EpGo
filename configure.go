@@ -29,12 +29,33 @@ func Configure(filename string) (err error) {
 		return err
 	}
 
-	Cache.Open()
+	if err = Cache.Open(); err != nil {
+		return err
+	}
 
-	if len(Config.Account.Username) != 0 || len(Config.Account.Password) != 0 {
-		sd.Login()
-		Cache.Save()
-		sd.Status()
+	// Interactive authentication failures must leave Account/Exit reachable.
+	// Storage failures still abort; headless Update continues to fail on either.
+	authenticated := false
+	authenticate := func() error {
+		authenticated = false
+		if err := sd.Login(); err != nil {
+			logger.Error("unable to authenticate; edit Account or exit", "error", err)
+			return nil
+		}
+		if err := Cache.Save(); err != nil {
+			return err
+		}
+		if err := sd.Status(); err != nil {
+			logger.Error("unable to get account status; edit Account or exit", "error", err)
+			return nil
+		}
+		authenticated = true
+		return nil
+	}
+	if Config.Account.Username != "" && Config.Account.Password != "" {
+		if err = authenticate(); err != nil {
+			return err
+		}
 	}
 
 	for {
@@ -53,37 +74,28 @@ func Configure(filename string) (err error) {
 		entry.Key = 1
 		entry.Value = getMsg(0011)
 		menu.Entry[1] = entry
-		if len(Config.Account.Username) == 0 || len(Config.Account.Password) == 0 {
-			entry.account()
-			err = sd.Login()
-			if err != nil {
-				os.RemoveAll(Config.File + ".yaml")
-				os.Exit(0)
-			}
-			Cache.Save()
-			sd.Status()
 
+		if authenticated {
+			// Add Lineup
+			entry.Key = 2
+			entry.Value = getMsg(0012)
+			menu.Entry[2] = entry
+
+			// Remove Lineup
+			entry.Key = 3
+			entry.Value = getMsg(0013)
+			menu.Entry[3] = entry
+
+			// Manage Channels
+			entry.Key = 4
+			entry.Value = getMsg(0014)
+			menu.Entry[4] = entry
+
+			// Create XMLTV file
+			entry.Key = 5
+			entry.Value = fmt.Sprintf("%s [%s]", getMsg(0016), Config.Files.XMLTV)
+			menu.Entry[5] = entry
 		}
-
-		// Add Lineup
-		entry.Key = 2
-		entry.Value = getMsg(0012)
-		menu.Entry[2] = entry
-
-		// Remove Lineup
-		entry.Key = 3
-		entry.Value = getMsg(0013)
-		menu.Entry[3] = entry
-
-		// Manage Channels
-		entry.Key = 4
-		entry.Value = getMsg(0014)
-		menu.Entry[4] = entry
-
-		// Create XMLTV file
-		entry.Key = 5
-		entry.Value = fmt.Sprintf("%s [%s]", getMsg(0016), Config.Files.XMLTV)
-		menu.Entry[5] = entry
 
 		var selection = menu.Show()
 
@@ -92,31 +104,43 @@ func Configure(filename string) (err error) {
 		switch selection {
 
 		case 0:
-			Config.Save()
-			os.Exit(0)
+			return Config.Save()
 
 		case 1:
 			entry.account()
 			Cache.Token = ""
 			Cache.TokenExpires = 0
-			sd.Login()
-			Cache.Save()
-			sd.Status()
+			sd.Token, Token = "", ""
+			// Do not reuse the previous account's token after a failed edit/exit.
+			if err = Cache.Save(); err != nil {
+				return err
+			}
+			if err = authenticate(); err != nil {
+				return err
+			}
 
 		case 2:
 			entry.addLineup(&sd)
-			sd.Status()
+			if err = sd.Status(); err != nil {
+				return err
+			}
 
 		case 3:
 			entry.removeLineup(&sd)
-			sd.Status()
+			if err = sd.Status(); err != nil {
+				return err
+			}
 
 		case 4:
 			entry.manageChannels(&sd)
-			sd.Status()
+			if err = sd.Status(); err != nil {
+				return err
+			}
 
 		case 5:
-			sd.Update(filename)
+			if err = sd.Update(filename); err != nil {
+				return err
+			}
 
 		}
 

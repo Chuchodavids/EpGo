@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http"
 	"time"
 )
 
@@ -13,6 +14,8 @@ type SDStatus struct {
 type SD struct {
 	BaseURL string
 	Token   string
+	Client  *http.Client
+	Sleep   func(time.Duration)
 
 	// SD Request
 	Req struct {

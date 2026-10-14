@@ -6,8 +6,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,5 +133,30 @@ func TestReliabilityGuideWriteReturnsError(t *testing.T) {
 	}()
 	if err := CreateXMLTV(filename); err == nil {
 		t.Fatal("guide write failure was swallowed")
+	}
+}
+
+func TestReliabilityLoginRejectsResultErrors(t *testing.T) {
+	for _, response := range []string{`{"code":4003}`, `{"code":3000}`, `{"code":0,"token":"","tokenExpires":9999999999}`, `{"code":0,"token":"expired","tokenExpires":1}`} {
+		t.Run(response, func(t *testing.T) {
+			reliabilityConfig(t)
+			n := 0
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { n++; io.WriteString(w, response) }))
+			defer s.Close()
+			// Use a private real transport only to the local server.
+			http.DefaultTransport = &http.Transport{}
+			var sd SD
+			sd.Init()
+			sd.BaseURL = s.URL + "/"
+			if err := sd.Login(); err == nil {
+				t.Error("unusable token/API failure reported success")
+			}
+			if n > 2 {
+				t.Errorf("unbounded retry: %d", n)
+			}
+			if strings.Contains(response, `"code":4003`) && n != 1 {
+				t.Errorf("repeated invalid credentials %d times", n)
+			}
+		})
 	}
 }
