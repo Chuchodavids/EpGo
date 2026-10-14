@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,8 +19,15 @@ import (
 var Cache cache
 var ImageError bool = false
 
+// cacheVersion 1 added movie, multipart, premiere and signed data. Older
+// programs and schedule days are downloaded again; the old data stays as a
+// fallback until then.
+const cacheVersion = 1
+
 // Init : Inti cache
 func (c *cache) Init() {
+
+	c.Version = cacheVersion
 
 	if c.Schedule == nil {
 		c.Schedule = make(map[string][]EPGoCache)
@@ -118,6 +126,10 @@ func (c *cache) AddSchedule(data *[]byte) {
 			epgoCache.Duration = p.Duration
 			epgoCache.LiveTapeDelay = p.LiveTapeDelay
 			epgoCache.New = p.New
+			epgoCache.Premiere = p.Premiere
+			epgoCache.PremiereFinale = p.PremiereFinale
+			epgoCache.Signed = p.Signed
+			epgoCache.Multipart = p.Multipart
 			epgoCache.Md5 = p.Md5
 			epgoCache.ProgramID = p.ProgramID
 			epgoCache.Ratings = p.Ratings
@@ -168,6 +180,8 @@ func (c *cache) AddProgram(gzip *[]byte, wg *sync.WaitGroup) {
 		epgoCache.OriginalAirDate = sd.OriginalAirDate
 		epgoCache.ResourceID = sd.ResourceID
 		epgoCache.ShowType = sd.ShowType
+		epgoCache.Movie = sd.Movie
+		epgoCache.Multipart = sd.Multipart
 		epgoCache.Titles = sd.Titles
 		epgoCache.ContentRating = sd.ContentRating
 		epgoCache.Cast = sd.Cast
@@ -381,6 +395,16 @@ func (c *cache) Open() (err error) {
 	c.Channel, c.Program, c.Metadata, c.Schedule = loaded.Channel, loaded.Program, loaded.Metadata, loaded.Schedule
 	c.Token, c.TokenExpires, c.ImageLimitUntil = loaded.Token, loaded.TokenExpires, loaded.ImageLimitUntil
 	c.ScheduleMd5 = loaded.ScheduleMd5
+
+	// Keep the old program data as a fallback, but download it again.
+	if loaded.Version < cacheVersion {
+		for id, p := range c.Program {
+			p.Md5 = ""
+			c.Program[id] = p
+		}
+		c.ScheduleMd5 = nil
+	}
+	c.Version = cacheVersion
 
 	return
 }
@@ -638,7 +662,9 @@ func (c *cache) GetCategory(id string) (ca []Category) {
 	return
 }
 
-func (c *cache) GetEpisodeNum(id string) (ep []EpisodeNum) {
+// GetEpisodeNum returns the episode numbers of a program. part is the
+// schedule's multipart value; the program's own value is used without it.
+func (c *cache) GetEpisodeNum(id string, part *Multipart) (ep []EpisodeNum) {
 
 	var seaseon, episode int
 
@@ -651,17 +677,29 @@ func (c *cache) GetEpisodeNum(id string) (ep []EpisodeNum) {
 			}
 			seaseon = m.Gracenote.Season
 			episode = m.Gracenote.Episode
+			break
 
-			var episodeNum EpisodeNum
+		}
 
-			if seaseon != 0 && episode != 0 {
+		if part == nil {
+			part = p.Multipart
+		}
 
-				episodeNum.Value = fmt.Sprintf("%d.%d.", seaseon-1, episode-1)
-				episodeNum.System = "xmltv_ns"
-				ep = append(ep, episodeNum)
-				break
+		var xmltvNS string
+		if seaseon != 0 && episode != 0 {
+			xmltvNS = fmt.Sprintf("%d.%d.", seaseon-1, episode-1)
+		}
+		if part != nil && part.PartNumber > 0 {
+			if xmltvNS == "" {
+				xmltvNS = ".."
 			}
-
+			xmltvNS += strconv.Itoa(part.PartNumber - 1)
+			if part.TotalParts >= part.PartNumber {
+				xmltvNS += "/" + strconv.Itoa(part.TotalParts)
+			}
+		}
+		if xmltvNS != "" {
+			ep = append(ep, EpisodeNum{System: "xmltv_ns", Value: xmltvNS})
 		}
 
 		if seaseon != 0 && episode != 0 {
@@ -706,10 +744,91 @@ func (c *cache) GetPreviouslyShown(id string) (prev *PreviouslyShown) {
 	prev = &PreviouslyShown{}
 
 	if p, ok := c.Program[id]; ok {
-		prev.Start = p.OriginalAirDate
+		prev.Start = xmltvDate(p.OriginalAirDate)
 	}
 
 	return
+}
+
+// xmltvDate converts an SD date (YYYY-MM-DD) to the XMLTV form (YYYYMMDD).
+// TVHeadend reads the dashes of the SD form as a time zone offset.
+func xmltvDate(date string) string {
+	t, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return ""
+	}
+	return t.Format("20060102")
+}
+
+// GetDate returns the XMLTV date of a program: the year of a movie, otherwise
+// the original air date.
+func (c *cache) GetDate(id string) string {
+
+	if p, ok := c.Program[id]; ok {
+		if p.Movie != nil && len(p.Movie.Year) == 4 {
+			if _, err := strconv.Atoi(string(p.Movie.Year)); err == nil {
+				return string(p.Movie.Year)
+			}
+		}
+		return xmltvDate(p.OriginalAirDate)
+	}
+
+	return ""
+}
+
+// GetStarRating returns the first quality rating of a movie, for example 3/4.
+func (c *cache) GetStarRating(id string) (sr []StarRating) {
+
+	if p, ok := c.Program[id]; ok && p.Movie != nil {
+		for _, q := range p.Movie.QualityRating {
+			if q.Rating != "" && q.MaxRating != "" {
+				return []StarRating{{System: string(q.RatingsBody), Value: string(q.Rating) + "/" + string(q.MaxRating)}}
+			}
+		}
+	}
+
+	return
+}
+
+// GetSubtitles maps SD accessibility properties to XMLTV subtitles.
+func GetSubtitles(s EPGoCache) (st []Subtitles) {
+
+	var seen = make(map[string]bool)
+	add := func(t string) {
+		if !seen[t] {
+			seen[t] = true
+			st = append(st, Subtitles{Type: t})
+		}
+	}
+
+	for _, a := range s.AudioProperties {
+		switch a {
+		case "cc":
+			add("teletext")
+		case "subtitled":
+			add("onscreen")
+		}
+	}
+	if s.Signed {
+		add("deaf-signed")
+	}
+
+	return
+}
+
+// GetPremiere returns the premiere element of an airing. SD's premiere flag
+// marks a movie or miniseries premiere and is always used. TVHeadend treats a
+// premiere as new, so SD's premiere/finale text is only used on new airings.
+func GetPremiere(s EPGoCache) *Premiere {
+
+	if strings.Contains(s.PremiereFinale, "Premiere") && s.New {
+		return &Premiere{Value: s.PremiereFinale}
+	}
+	if s.Premiere {
+		return &Premiere{}
+	}
+
+	return nil
 }
 
 func (c *cache) GetRating(id, countryCode string) (ra []Rating) {

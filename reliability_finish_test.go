@@ -361,7 +361,7 @@ func TestReliabilityMetadataIdentityAcrossRefreshAndAirings(t *testing.T) {
 	reliabilityConfig(t)
 	syntheticCache(t)
 	id := "EP000000010001"
-	oldIdentity := Cache.GetEpisodeNum(id)[0]
+	oldIdentity := Cache.GetEpisodeNum(id, nil)[0]
 	Cache.Schedule["1"] = append(Cache.Schedule["1"], Cache.Schedule["1"][0])
 	Cache.Schedule["1"][1].AirDateTime = Cache.Schedule["1"][0].AirDateTime.Add(time.Hour)
 	for i := range Cache.Schedule["1"] {

@@ -193,6 +193,9 @@ func getProgram(channel EPGoCache) (p []Programme) {
 			// Credits
 			pro.Credits = Cache.GetCredits(s.ProgramID)
 
+			// Date
+			pro.Date = Cache.GetDate(s.ProgramID)
+
 			// Category
 			pro.Categorys = Cache.GetCategory(s.ProgramID)
 
@@ -200,7 +203,7 @@ func getProgram(channel EPGoCache) (p []Programme) {
 			pro.Language = lang
 
 			// EpisodeNum
-			pro.EpisodeNums = Cache.GetEpisodeNum(s.ProgramID)
+			pro.EpisodeNums = Cache.GetEpisodeNum(s.ProgramID, s.Multipart)
 
 			// Icon
 			var imageURL string
@@ -222,6 +225,7 @@ func getProgram(channel EPGoCache) (p []Programme) {
 
 			// Rating
 			pro.Rating = Cache.GetRating(s.ProgramID, countryCode)
+			pro.StarRating = Cache.GetStarRating(s.ProgramID)
 
 			// Video
 			for _, v := range s.VideoProperties {
@@ -246,21 +250,27 @@ func getProgram(channel EPGoCache) (p []Programme) {
 					pro.Audio.Stereo = "dolby digital"
 				case "Dolby":
 					pro.Audio.Stereo = "dolby"
+				case "DD":
+					pro.Audio.Stereo = "dolby digital"
+				case "surround":
+					pro.Audio.Stereo = "surround"
 				case "dubbed", "mono":
-					pro.Audio.Stereo = "mono"
-				default:
 					pro.Audio.Stereo = "mono"
 
 				}
 
 			}
 
-			// New / PreviouslyShown
+			// New / Premiere / PreviouslyShown
+			pro.Premiere = GetPremiere(s)
 			if s.New {
 				pro.New = &New{Value: ""}
-			} else {
+			} else if pro.Premiere == nil {
 				pro.PreviouslyShown = Cache.GetPreviouslyShown(s.ProgramID)
 			}
+
+			// Subtitles
+			pro.Subtitles = GetSubtitles(s)
 
 			// Live
 			if s.LiveTapeDelay == "Live" {

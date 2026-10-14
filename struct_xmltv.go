@@ -16,6 +16,7 @@ type Programme struct {
 
 	// Credits
 	Credits *Credits `xml:"credits,omitempty"`
+	Date    string   `xml:"date,omitempty"`
 
 	Categorys []Category `xml:"category,omitempty"`
 	Language  string     `xml:"language,omitempty"`
@@ -27,9 +28,12 @@ type Programme struct {
 	Audio       Audio        `xml:"audio"`
 
 	PreviouslyShown *PreviouslyShown `xml:"previously-shown,omitempty"`
+	Premiere        *Premiere        `xml:"premiere,omitempty"`
 	New             *New             `xml:"new"`
+	Subtitles       []Subtitles      `xml:"subtitles,omitempty"`
 	Live            *Live            `xml:"live"`
 	Rating          []Rating         `xml:"rating,omitempty"`
+	StarRating      []StarRating     `xml:"star-rating,omitempty"`
 	Images          []ProgrammeImage `xml:"image,omitempty"`
 }
 
@@ -151,8 +155,21 @@ type PreviouslyShown struct {
 	Start string `xml:"start,attr,omitempty"`
 }
 
+type Premiere struct {
+	Value string `xml:",chardata"`
+}
+
 type New struct {
 	Value string `xml:",chardata"`
+}
+
+type Subtitles struct {
+	Type string `xml:"type,attr,omitempty"`
+}
+
+type StarRating struct {
+	System string `xml:"system,attr,omitempty"`
+	Value  string `xml:"value"`
 }
 
 type Live struct {

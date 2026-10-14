@@ -22,6 +22,10 @@ type cache struct {
 	// whose md5 did not change are not downloaded again.
 	ScheduleMd5 map[string]map[string]string `json:"ScheduleMd5,omitempty"`
 
+	// Version is the cache format. Programs cached by an older format are
+	// downloaded again because they lack fields read by newer versions.
+	Version int `json:"Version,omitempty"`
+
 	sync.RWMutex `json:"-"`
 }
 
@@ -60,6 +64,9 @@ type EPGoCache struct {
 	Duration        int       `json:"duration,omitempty"`
 	LiveTapeDelay   string    `json:"liveTapeDelay,omitempty"`
 	New             bool      `json:"new,omitempty"`
+	Premiere        bool      `json:"premiere,omitempty"`
+	PremiereFinale  string    `json:"isPremiereOrFinale,omitempty"`
+	Signed          bool      `json:"signed,omitempty"`
 	Ratings         []struct {
 		Body string `json:"body"`
 		Code string `json:"code"`
@@ -114,7 +121,11 @@ type EPGoCache struct {
 	OriginalAirDate string `json:"originalAirDate,omitempty"`
 	ResourceID      string `json:"resourceID,omitempty"`
 	ShowType        string `json:"showType,omitempty"`
-	Titles          []struct {
+	Movie           *Movie `json:"movie,omitempty"`
+
+	// Schedule and Program: SD sends multipart in either
+	Multipart *Multipart `json:"multipart,omitempty"`
+	Titles    []struct {
 		Title120 string `json:"title120"`
 	} `json:"titles"`
 
@@ -127,13 +138,17 @@ type SDSchedule struct {
 
 	// Schedule
 	Programs []struct {
-		AirDateTime     time.Time `json:"airDateTime"`
-		AudioProperties []string  `json:"audioProperties"`
-		Duration        int       `json:"duration"`
-		LiveTapeDelay   string    `json:"liveTapeDelay"`
-		New             bool      `json:"new"`
-		Md5             string    `json:"md5"`
-		ProgramID       string    `json:"programID"`
+		AirDateTime     time.Time  `json:"airDateTime"`
+		AudioProperties []string   `json:"audioProperties"`
+		Duration        int        `json:"duration"`
+		LiveTapeDelay   string     `json:"liveTapeDelay"`
+		New             bool       `json:"new"`
+		Premiere        bool       `json:"premiere"`
+		PremiereFinale  string     `json:"isPremiereOrFinale"`
+		Signed          bool       `json:"signed"`
+		Multipart       *Multipart `json:"multipart"`
+		Md5             string     `json:"md5"`
+		ProgramID       string     `json:"programID"`
 		Ratings         []struct {
 			Body string `json:"body"`
 			Code string `json:"code"`
