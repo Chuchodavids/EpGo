@@ -360,15 +360,25 @@ func (c *cache) Open() (err error) {
 	data, err := os.ReadFile(Config.Files.Cache)
 
 	if err != nil {
-		c.Init()
-		c.Save()
-		return nil
+		if os.IsNotExist(err) {
+			c.Init()
+			return nil
+		}
+		return err
 	}
 
-	err = json.Unmarshal(data, &c)
+	var loaded *cache
+	err = json.Unmarshal(data, &loaded)
 	if err != nil {
 		return
 	}
+	if loaded == nil {
+		return fmt.Errorf("cache is null")
+	}
+	c.Lock()
+	defer c.Unlock()
+	c.Channel, c.Program, c.Metadata, c.Schedule = loaded.Channel, loaded.Program, loaded.Metadata, loaded.Schedule
+	c.Token, c.TokenExpires, c.ImageLimitUntil = loaded.Token, loaded.TokenExpires, loaded.ImageLimitUntil
 
 	return
 }
@@ -383,7 +393,10 @@ func (c *cache) Save() (err error) {
 		return err
 	}
 
-	err = os.WriteFile(Config.Files.Cache, data, 0644)
+	err = writeAtomic(Config.Files.Cache, 0600, func(w io.Writer) error {
+		_, err := w.Write(data)
+		return err
+	})
 	if err != nil {
 		return
 	}

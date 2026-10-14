@@ -194,6 +194,8 @@ Cache: /app/file.json
 XMLTV: /app/xml  
 ```
 
+The cache and XMLTV files are written to a temporary file in the same folder first and then renamed, so readers never see a half-written file. The folder must be writable. A symlinked file is updated where the link points. The file never becomes more permissive than before (the XMLTV file at most `0644`, the cache `0600`) and keeps, where allowed, its owner and group. A file that is bind-mounted into a container on its own cannot be renamed over; it is then rewritten in place, which is not atomic: readers can see a partial file, and a failed write can leave it truncated. Mount the folder instead of the single file if that matters.
+
 ### Server: (Can be customized)
 
 ```yaml

@@ -5,7 +5,7 @@ import (
 	"encoding/xml"
 	"epgo/tmdb"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -39,10 +39,10 @@ func CreateXMLTV(filename string) (err error) {
 	enc := xml.NewEncoder(buf)
 	enc.Indent("", "  ")
 
-	var he = func(err error) {
-		if err != nil {
-			logger.Error("unable to encode the XML", "error", err)
-			return
+	var encodeErr error
+	var he = func(e error) {
+		if encodeErr == nil {
+			encodeErr = e
 		}
 	}
 
@@ -94,11 +94,16 @@ func CreateXMLTV(filename string) (err error) {
 
 	he(enc.EncodeToken(xml.EndElement{Name: xml.Name{Local: "tv"}}))
 	he(enc.Flush())
+	if encodeErr != nil {
+		return encodeErr
+	}
 
-	// write the whole body at once
-	err = os.WriteFile(Config.Files.XMLTV, buf.Bytes(), 0644)
+	err = writeAtomic(Config.Files.XMLTV, 0644, func(w io.Writer) error {
+		_, err := w.Write(buf.Bytes())
+		return err
+	})
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	return

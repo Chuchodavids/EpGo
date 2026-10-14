@@ -49,6 +49,7 @@ func main() {
 		err := Configure(*configure)
 		if err != nil {
 			logger.Error("unable to create the configuration file", "error", err)
+			os.Exit(1)
 		}
 		os.Exit(0)
 	}
@@ -58,6 +59,7 @@ func main() {
 		err := sd.Update(*config)
 		if err != nil {
 			logger.Error("unable to get data from Schedules Direct", "error", err)
+			os.Exit(1)
 		}
 	}
 
