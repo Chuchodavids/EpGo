@@ -668,6 +668,46 @@ func TestScheduleMd5SkipsUnchangedDays(t *testing.T) {
 	}
 }
 
+func TestMissingArtworkIsNotAGap(t *testing.T) {
+	filename := reliabilityConfig(t)
+	Config.Options.Schedule = 1
+	Config.Station = []channel{{ID: "1", Lineup: "TEST"}}
+	if err := Config.Save(); err != nil {
+		t.Fatal(err)
+	}
+	Cache.Init()
+	Cache.Token, Cache.TokenExpires = "synthetic-token", time.Now().Add(24*time.Hour).Unix()
+	if err := Cache.Save(); err != nil {
+		t.Fatal(err)
+	}
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	source := &partialSource{
+		schedules: "[" + partialSchedule("1", today, partialAiring("EP000000010001", "p", today.Add(12*time.Hour), 3600), partialAiring("EP000000010002", "p", today.Add(13*time.Hour), 3600)) + "]",
+		programs:  "[" + partialProgram("EP000000010001", "p", "No artwork") + "," + partialProgram("EP000000010002", "p", "Broken artwork") + "]",
+		metadata: `[{"programID":"EP000000010001","data":{"response":"INVALID_PROGRAMID","code":6000,"message":"Could not find requested programID."}},` +
+			`{"programID":"EP000000010002","data":{"response":"ERROR","code":9999}}]`,
+	}
+	source.install(t)
+	var logs bytes.Buffer
+	logger = slog.New(slog.NewTextHandler(&logs, nil))
+	var sd SD
+	if err := sd.Update(filename); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), "published with gaps") || !strings.Contains(logs.String(), "no_artwork=1 ") || !strings.Contains(logs.String(), "metadata_failures=1") {
+		t.Fatalf("real metadata failure not reported: %s", &logs)
+	}
+
+	source.metadata = `[{"programID":"EP000000010001","data":{"code":6000}},{"programID":"EP000000010002","data":{"code":6000}}]`
+	logs.Reset()
+	if err := sd.Update(filename); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), `msg="EPG update published"`) || !strings.Contains(logs.String(), "no_artwork=2 ") || !strings.Contains(logs.String(), "metadata_failures=0") {
+		t.Fatalf("missing artwork reported as a gap: %s", &logs)
+	}
+}
+
 func md5TestSetup(t *testing.T) (string, time.Time, time.Time) {
 	t.Helper()
 	filename := reliabilityConfig(t)

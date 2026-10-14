@@ -12,6 +12,7 @@ type updateSummary struct {
 	FreshScheduleDays, UnchangedScheduleDays                          int
 	CachedScheduleDays, MissingScheduleDays                           int
 	CachedPrograms, MissingPrograms, MetadataFailures, LineupFailures int
+	NoArtwork                                                         int
 	FetchStopped                                                      error
 }
 
@@ -24,7 +25,7 @@ func (s updateSummary) log() {
 	log(message, "fresh_schedule_days", s.FreshScheduleDays, "unchanged_schedule_days", s.UnchangedScheduleDays,
 		"cached_schedule_days", s.CachedScheduleDays,
 		"missing_schedule_days", s.MissingScheduleDays, "cached_programs", s.CachedPrograms,
-		"missing_programs", s.MissingPrograms, "metadata_failures", s.MetadataFailures, "lineup_failures", s.LineupFailures,
+		"missing_programs", s.MissingPrograms, "metadata_failures", s.MetadataFailures, "no_artwork", s.NoArtwork, "lineup_failures", s.LineupFailures,
 		"fetch_stopped", s.FetchStopped)
 }
 
@@ -199,16 +200,18 @@ func selectSchedules(body []byte, requested []channel) (map[scheduleKey]SDSchedu
 
 // Filter item errors before AddProgram/AddMetadata can overwrite cached data.
 // Raw elements allow a malformed item's types to leave other items usable.
-func selectPrograms(body []byte, requested []string, metadata bool) (map[string]json.RawMessage, error) {
+// notFound lists the requested IDs SD answered with 6000. For metadata that
+// means SD has no artwork for the program (yet), which is not a failure.
+func selectPrograms(body []byte, requested []string, metadata bool) (good map[string]json.RawMessage, notFound map[string]bool, err error) {
 	var entries []json.RawMessage
 	if err := json.Unmarshal(body, &entries); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	wanted, seen := make(map[string]bool), make(map[string]bool)
 	for _, id := range requested {
 		wanted[id] = true
 	}
-	good := make(map[string]json.RawMessage)
+	good, notFound = make(map[string]json.RawMessage), make(map[string]bool)
 	var stop error
 	for _, raw := range entries {
 		var header struct {
@@ -236,10 +239,14 @@ func selectPrograms(body []byte, requested []string, metadata bool) (map[string]
 		}
 		if seen[id] {
 			delete(good, id)
+			delete(notFound, id)
 			logger.Warn("Duplicate programme result", "programID", id, "metadata", metadata)
 			continue
 		}
 		seen[id] = true
+		if code == 6000 {
+			notFound[id] = true
+		}
 		if code != 0 {
 			continue
 		}
@@ -256,5 +263,5 @@ func selectPrograms(body []byte, requested []string, metadata bool) (map[string]
 		}
 		good[id] = raw
 	}
-	return good, stop
+	return good, notFound, stop
 }

@@ -240,11 +240,12 @@ func (sd *SD) GetData() error {
 				return err
 			}
 			var good map[string]json.RawMessage
+			var notFound map[string]bool
 			err = sd.update.FetchStopped
 			if err == nil {
 				err = sd.Program()
 				if err == nil {
-					good, err = selectPrograms(sd.Resp.Body, batch, kind == "metadata")
+					good, notFound, err = selectPrograms(sd.Resp.Body, batch, kind == "metadata")
 				}
 			}
 			if err != nil {
@@ -268,6 +269,8 @@ func (sd *SD) GetData() error {
 						sd.update.MissingPrograms++
 					}
 					logger.Warn("Programme unavailable", "programID", id, "cached", cached)
+				} else if notFound[id] {
+					sd.update.NoArtwork++
 				} else {
 					sd.update.MetadataFailures++
 				}
