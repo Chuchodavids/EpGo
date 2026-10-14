@@ -25,6 +25,70 @@ func diskCache(t *testing.T) *cache {
 	return &c
 }
 
+func TestReliabilityRenewalDoesNotCommitStagedFetch(t *testing.T) {
+	filename := reliabilityConfig(t)
+	syntheticCache(t)
+	Cache.ImageLimitUntil = time.Now().Add(time.Hour).Unix()
+	if err := Cache.Save(); err != nil {
+		t.Fatal(err)
+	}
+	capUntil := Cache.ImageLimitUntil
+	oldGuide := "<tv><!-- committed --></tv>"
+	os.WriteFile(Config.Files.XMLTV, []byte(oldGuide), 0644)
+	metadataCalls, logins := 0, 0
+	http.DefaultTransport = imageTransport(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/20141201/status":
+			return syntheticResponse(200, `{"lineups":[{"lineup":"TEST"}]}`), nil
+		case "/20141201/lineups/TEST":
+			return syntheticResponse(200, `{"stations":[{"stationID":"1","name":"Synthetic"}]}`), nil
+		case "/20141201/schedules":
+			return syntheticResponse(200, fmt.Sprintf(`[{"stationID":"1","programs":[{"programID":"EP000000010001","md5":"new","airDateTime":"%s","duration":60}],"metadata":{"startDate":"%s"}}]`, time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Format("2006-01-02"))), nil
+		case "/20141201/programs":
+			return syntheticResponse(200, `[{"programID":"EP000000010001","md5":"new","titles":[{"title120":"Synthetic new"}]}]`), nil
+		case "/20141201/metadata/programs/":
+			metadataCalls++
+			if Cache.Program["EP000000010001"].Md5 != "new" {
+				t.Error("renewal was not tested after staging new program data")
+			}
+			if metadataCalls == 1 {
+				return syntheticResponse(403, `{"code":4006}`), nil
+			}
+			if r.Header.Get("Token") != "renewed-synthetic" {
+				t.Error("request did not use renewed token")
+			}
+			disk := diskCache(t)
+			if disk.Program["EP000000010001"].Md5 != "old" || disk.Schedule["1"][0].Md5 != "old" {
+				t.Error("token renewal prematurely committed staged guide data")
+			}
+			return syntheticResponse(200, `{"code":3000}`), nil
+		case "/20141201/token":
+			logins++
+			return syntheticResponse(200, fmt.Sprintf(`{"code":0,"token":"renewed-synthetic","tokenExpires":%d}`, time.Now().Add(24*time.Hour).Unix())), nil
+		default:
+			return nil, fmt.Errorf("unexpected local request")
+		}
+	})
+	var sd SD
+	if err := sd.Update(filename); err != nil {
+		t.Fatalf("later provider stop discarded usable staged data: %v", err)
+	}
+	disk := diskCache(t)
+	if disk.Program["EP000000010001"].Md5 != "new" || disk.Schedule["1"][0].Md5 != "new" {
+		t.Fatal("validated partial publication did not commit its data")
+	}
+	if disk.Token != "renewed-synthetic" || disk.ImageLimitUntil != capUntil {
+		t.Fatal("renewal lost token/cap state")
+	}
+	if logins != 1 || metadataCalls != 2 {
+		t.Fatalf("logins=%d metadata=%d", logins, metadataCalls)
+	}
+	guide, _ := os.ReadFile(Config.Files.XMLTV)
+	if string(guide) == oldGuide || !strings.Contains(string(guide), "Synthetic new") {
+		t.Fatal("validated partial publication lost fresh programme data")
+	}
+}
+
 func TestReliabilityTransientRetries(t *testing.T) {
 	for _, recover := range []bool{false, true} {
 		t.Run(fmt.Sprint(recover), func(t *testing.T) {
@@ -121,5 +185,94 @@ func TestReliabilityAtomicWriteFailure(t *testing.T) {
 	entries, _ := os.ReadDir(filepath.Dir(name))
 	if len(entries) != 1 {
 		t.Fatal("error leaked temporary file")
+	}
+}
+
+func syntheticImages(t *testing.T) {
+	t.Helper()
+	Config.Options.Images.Download, Config.Options.Images.Typed = true, true
+	Config.Options.Images.Cleanup = 14
+	os.MkdirAll(Config.Options.Images.Path, 0755)
+	Cache.Metadata["EP000000010001"] = EPGoCache{Data: []Data{{URI: "selected.jpg", Category: "Poster Art", Aspect: "16x9", Width: 640, Height: 360}}}
+	if err := Cache.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := Config.Save(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func oldImage(t *testing.T, name string) string {
+	t.Helper()
+	path := filepath.Join(Config.Options.Images.Path, name)
+	if err := os.WriteFile(path, []byte("synthetic-image"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestReliabilityCleanupPublicationBoundary(t *testing.T) {
+	for _, scenario := range []string{"disabled", "write-error", "success"} {
+		t.Run(scenario, func(t *testing.T) {
+			filename := reliabilityConfig(t)
+			syntheticCache(t)
+			syntheticImages(t)
+			old := oldImage(t, "previous-guide.jpg")
+			selected := oldImage(t, "selected.jpg")
+			if scenario == "disabled" {
+				Config.Options.Images.Download = false
+				Config.Save()
+			}
+			if scenario == "write-error" {
+				os.Mkdir(Config.Files.XMLTV, 0755)
+			}
+			err := CreateXMLTV(filename)
+			if (err != nil) != (scenario == "write-error") {
+				t.Fatalf("unexpected result %v", err)
+			}
+			_, err = os.Stat(old)
+			if (err == nil) != (scenario != "success") {
+				t.Fatalf("previous image cleanup boundary: %v", err)
+			}
+			info, err := os.Stat(selected)
+			if err != nil {
+				t.Fatal("selected image removed")
+			}
+			if scenario != "disabled" && time.Since(info.ModTime()) > time.Minute {
+				t.Fatal("selected image was not retained")
+			}
+		})
+	}
+}
+
+func TestReliabilityScheduleDocumentedShapes(t *testing.T) {
+	reliabilityConfig(t)
+	now := time.Now().UTC()
+	today, tomorrow := now.Format("2006-01-02"), now.AddDate(0, 0, 1).Format("2006-01-02")
+	good := func(station, date string) string {
+		return fmt.Sprintf(`{"stationID":%q,"programs":[{"programID":"SH000000010000","md5":"synthetic-md5","airDateTime":%q,"duration":86400}],"metadata":{"startDate":%q,"code":0}}`, station, date+"T00:00:00Z", date)
+	}
+	rangeEnd := fmt.Sprintf(`{"stationID":"1","code":7020,"requestedDate":%q,"minDate":%q,"maxDate":%q}`, tomorrow, today, today)
+	requested := []channel{{ID: "1", Date: []string{today, tomorrow}}, {ID: "2", Date: []string{today, tomorrow}}}
+	body := "[" + good("1", today) + "," + rangeEnd + "," + good("2", today) + "," + good("2", tomorrow) + "]"
+	if good, rangeEnds, err := selectSchedules([]byte(body), requested); err != nil || len(good) != 3 || len(rangeEnds) != 1 {
+		t.Fatalf("good=%d rangeEnds=%d err=%v", len(good), len(rangeEnds), err)
+	}
+	// Embedded SDSchedule must expose both stationID and programs through JSON.
+	for _, body := range []string{
+		`[{"stationID":"1","programs":[],"metadata":{"startDate":"` + today + `"}}]`,
+		`[{"stationID":"1","code":7100,"retryTime":"synthetic"}]`,
+		`[{"stationID":"1","programs":[],"metadata":{"code":2201,"startDate":"` + today + `"}}]`,
+		`[{"stationID":"1","code":7020,"requestedDate":"` + today + `","maxDate":"2000-01-01"}]`,
+		"[" + good("1", today) + "," + good("1", today) + "]",
+		`[]`,
+	} {
+		if good, rangeEnds, err := selectSchedules([]byte(body), []channel{{ID: "1", Date: []string{today}}}); err != nil || len(good) != 0 || len(rangeEnds) != 0 {
+			t.Fatalf("invalid schedule accepted or escalated to global failure: %s (err=%v)", body, err)
+		}
 	}
 }

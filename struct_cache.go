@@ -50,6 +50,7 @@ type EPGoCache struct {
 	} `json:"logo,omitempty"`
 
 	// Schedule
+	ScheduleDate    string    `json:"scheduleDate,omitempty"`
 	AirDateTime     time.Time `json:"airDateTime,omitempty"`
 	AudioProperties []string  `json:"audioProperties,omitempty"`
 	Duration        int       `json:"duration,omitempty"`
@@ -136,4 +137,8 @@ type SDSchedule struct {
 		VideoProperties []string `json:"videoProperties"`
 	} `json:"programs"`
 	StationID string `json:"stationID"`
+	Metadata  struct {
+		StartDate string `json:"startDate"`
+		Code      int    `json:"code"`
+	} `json:"metadata"`
 }

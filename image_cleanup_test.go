@@ -43,7 +43,12 @@ func TestDeleteUnusedImages(t *testing.T) {
 	otherOld := write("notes.txt", old)
 
 	// No requests: all used images exist (the transport fails the test).
-	c.prefetchImages()
+	usedCount, err := c.prefetchImages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Cleanup is a post-publication action, no longer part of prefetch.
+	deleteUnusedImages(usedCount)
 
 	for _, file := range append(used, unusedNew, otherOld) {
 		if _, err := os.Stat(file); err != nil {

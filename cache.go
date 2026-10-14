@@ -112,6 +112,7 @@ func (c *cache) AddSchedule(data *[]byte) {
 
 		for _, p := range sd.Programs {
 
+			epgoCache.ScheduleDate = sd.Metadata.StartDate
 			epgoCache.AirDateTime = p.AirDateTime
 			epgoCache.AudioProperties = p.AudioProperties
 			epgoCache.Duration = p.Duration
@@ -270,7 +271,7 @@ func (c *cache) GetRequiredProgramIDs() (programIDs []string) {
 			}
 
 			// Check every airing: any one of them may carry the changed md5.
-			if p, ok := c.Program[schedule.ProgramID]; !ok || p.Md5 != schedule.Md5 {
+			if p, ok := c.Program[schedule.ProgramID]; !ok || !usableProgram(p) || p.Md5 != schedule.Md5 {
 				seen[schedule.ProgramID] = true
 				programIDs = append(programIDs, schedule.ProgramID)
 			}
@@ -436,8 +437,8 @@ func (c *cache) CleanUp() error {
 
 	}
 
-	c.Channel = make(map[string]EPGoCache)
-	c.Schedule = make(map[string][]EPGoCache)
+	// Keep the selected stations and requested schedule window for scoped
+	// fallback on the next run. GetData replaces/prunes them before publication.
 
 	logger.Info("Clean up Cache", "count", count)
 

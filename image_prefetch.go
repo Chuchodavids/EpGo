@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -15,14 +16,23 @@ const imageDownloadWorkers = 4
 
 // prefetchImages downloads every image the XMLTV file will reference before it
 // is written. Writing it then only finds existing files or known failures.
-func (c *cache) prefetchImages() {
+func (c *cache) prefetchImages() (int, error) {
+	return c.prefetchImagesWithNetwork(true)
+}
+
+func (c *cache) prefetchImagesWithNetwork(allowNetwork bool) (int, error) {
 	if !Config.Options.Images.Download {
-		return
+		return 0, nil
 	}
+	imageMu.Lock()
+	imageDownloadsStopped = !allowNetwork
+	imageFailures = map[string]error{}
+	imageMu.Unlock()
 	seen := make(map[string]bool)
 	var uris []string
 	now := time.Now()
 	cached := 0
+	var touchErr error
 	add := func(uri string) {
 		name := imageFilename(uri)
 		if uri == "" || seen[name] {
@@ -33,6 +43,9 @@ func (c *cache) prefetchImages() {
 		// goes by, and need no download.
 		if err := os.Chtimes(filepath.Join(imageFolder(), name), now, now); err == nil {
 			cached++
+			return
+		} else if !os.IsNotExist(err) {
+			touchErr = fmt.Errorf("unable to retain selected image %s: %w", name, err)
 			return
 		}
 		uris = append(uris, uri)
@@ -49,7 +62,13 @@ func (c *cache) prefetchImages() {
 			}
 		}
 	}
-	if until := time.Unix(Cache.ImageLimitUntil, 0); now.Before(until) {
+	if touchErr != nil {
+		return 0, touchErr
+	}
+	Cache.RLock()
+	until := time.Unix(Cache.ImageLimitUntil, 0)
+	Cache.RUnlock()
+	if now.Before(until) {
 		imageMu.Lock()
 		imageDownloadsStopped = true
 		imageMu.Unlock()
@@ -89,5 +108,5 @@ func (c *cache) prefetchImages() {
 	wg.Wait()
 	logger.Info("Images downloaded", "done", done, "failed", failed, "images", len(uris), "stopped", imagesStopped())
 
-	deleteUnusedImages(len(seen))
+	return len(seen), nil
 }

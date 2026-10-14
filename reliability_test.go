@@ -136,6 +136,78 @@ func TestReliabilityGuideWriteReturnsError(t *testing.T) {
 	}
 }
 
+func TestReliabilityNoUsableDataDoesNotPublish(t *testing.T) {
+	for _, fail := range []string{"lineup", "schedule", "program", "partial-schedule", "result-program"} {
+		t.Run(fail, func(t *testing.T) {
+			filename := reliabilityConfig(t)
+			syntheticCache(t)
+			if fail == "program" || fail == "result-program" {
+				Cache.Program = make(map[string]EPGoCache)
+				if err := Cache.Save(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			oldGuide := "<tv><!-- good guide --></tv>"
+			os.WriteFile(Config.Files.XMLTV, []byte(oldGuide), 0644)
+			http.DefaultTransport = imageTransport(func(r *http.Request) (*http.Response, error) {
+				body := `{}`
+				status := 200
+				switch r.URL.Path {
+				case "/20141201/status":
+					body = `{"code":0,"lineups":[{"lineup":"TEST"}]}`
+				case "/20141201/lineups/TEST":
+					body = `{"stations":[{"stationID":"1","name":"Synthetic"}]}`
+					if fail == "lineup" {
+						body = `{"code":3000}`
+					}
+				case "/20141201/schedules":
+					body = fmt.Sprintf(`[{"stationID":"1","programs":[{"programID":"EP000000010001","md5":"new","airDateTime":"%s","duration":60}],"metadata":{"startDate":"%s"}}]`, time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Format("2006-01-02"))
+					if fail == "schedule" {
+						body = `{"code":4001}`
+					}
+					if fail == "partial-schedule" {
+						body = `[]`
+					}
+				case "/20141201/programs":
+					body = `[{"programID":"EP000000010001","md5":"new","titles":[{"title120":"New synthetic"}]}]`
+					if fail == "program" {
+						status = 400
+						body = `{"code":4007}`
+					}
+					if fail == "result-program" {
+						body = `[{"programID":"EP000000010001","code":4001}]`
+					}
+				case "/20141201/metadata/programs/":
+					body = `[]`
+				default:
+					return nil, fmt.Errorf("unexpected synthetic request %s", r.URL.Path)
+				}
+				return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})
+			var sd SD
+			if err := sd.Update(filename); err == nil {
+				t.Error("global failure/no fresh data reported success")
+			}
+			guide, _ := os.ReadFile(Config.Files.XMLTV)
+			if string(guide) != oldGuide {
+				t.Error("global failure/no fresh data replaced good guide")
+			}
+			var disk cache
+			data, _ := os.ReadFile(Config.Files.Cache)
+			if err := json.Unmarshal(data, &disk); err != nil {
+				t.Fatal(err)
+			}
+			wantMD5 := "old"
+			if fail == "program" || fail == "result-program" {
+				wantMD5 = ""
+			}
+			if disk.Program["EP000000010001"].Md5 != wantMD5 {
+				t.Error("global failure/no fresh data replaced good program cache")
+			}
+		})
+	}
+}
+
 func TestReliabilityLoginRejectsResultErrors(t *testing.T) {
 	for _, response := range []string{`{"code":4003}`, `{"code":3000}`, `{"code":0,"token":"","tokenExpires":9999999999}`, `{"code":0,"token":"expired","tokenExpires":1}`} {
 		t.Run(response, func(t *testing.T) {

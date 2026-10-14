@@ -13,7 +13,12 @@ import (
 )
 
 // CreateXMLTV : Create XMLTV file from cache file
-func CreateXMLTV(filename string) (err error) {
+func CreateXMLTV(filename string) error {
+	return createXMLTV(filename, true)
+}
+
+// A provider stop prevents further SD downloads, not publication of usable data.
+func createXMLTV(filename string, downloadSDImages bool) (err error) {
 
 	defer func() {
 		runtime.GC()
@@ -63,7 +68,10 @@ func CreateXMLTV(filename string) (err error) {
 		return
 	}
 
-	Cache.prefetchImages()
+	used, err := Cache.prefetchImagesWithNetwork(downloadSDImages)
+	if err != nil {
+		return err
+	}
 
 	logger.Info("Create XMLTV File", "filename", Config.Files.XMLTV)
 
@@ -105,6 +113,10 @@ func CreateXMLTV(filename string) (err error) {
 	if err != nil {
 		return err
 	}
+	// Do not retire images from the previous guide until publication succeeds.
+	if Config.Options.Images.Download {
+		deleteUnusedImages(used)
+	}
 
 	return
 }
@@ -123,6 +135,12 @@ func getProgram(channel EPGoCache) (p []Programme) {
 	if schedule, ok := Cache.Schedule[channel.StationID]; ok {
 
 		for _, s := range schedule {
+
+			// An unavailable programme without a cached title is a gap, not a
+			// "No EPG Info" event that could overwrite TVHeadend's existing data.
+			if !usableProgram(Cache.Program[s.ProgramID]) {
+				continue
+			}
 
 			var pro Programme
 

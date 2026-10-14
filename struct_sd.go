@@ -16,6 +16,7 @@ type SD struct {
 	Token   string
 	Client  *http.Client
 	Sleep   func(time.Duration)
+	update  updateSummary
 
 	// SD Request
 	Req struct {

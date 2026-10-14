@@ -490,7 +490,31 @@ A `cronjob` file with these examples is included in the repository.
 
 ## Cache Cleanup
 
-After each XMLTV generation, stale program and metadata entries are automatically purged from the cache file. This keeps the cache size manageable without manual intervention.
+After each XMLTV generation, programme and metadata entries no longer referenced
+by the selected stations' schedule window are purged. Channels and schedules
+within that window remain cached for use when part of a later request fails.
+
+### Partial updates
+
+An unavailable station/day or programme does not block updates for the rest of
+the guide. Each valid station/day replaces its previous schedule; failed days
+reuse cached airings where available. Failed programme records reuse cached
+details for the same programme ID. Without usable cached details, that airing is
+omitted rather than replaced with a "No EPG Info" event. Failed records remain
+eligible for the next scheduled fetch.
+
+Partial publication succeeds and logs `EPG update published with gaps`, with
+counts for cached/missing schedule days, cached/missing programmes and metadata
+failures. There are no extra retries for queued or missing individual records.
+Artwork metadata failures can leave a usable text guide.
+
+Authentication, account, quota and other global API errors stop further SD
+requests, including image downloads. Usable data already fetched can still be
+published, and existing image files remain available. If there is no usable fresh
+schedule or programme data, the existing guide stays
+untouched and the run fails. Guide replacement remains atomic, so a failed write
+also leaves the previous file intact. Older cache files are supported, but days
+already removed by an older version cannot provide fallback until fetched again.
 
 ### Create the XMLTV file using the command line (CLI): 
 
