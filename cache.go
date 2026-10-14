@@ -5,17 +5,29 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 )
 
 // Cache : Cache file
 var Cache cache
 var ImageError bool = false
 
+// cacheVersion 1 added movie, multipart, premiere and signed data. Older
+// programs and schedule days are downloaded again; the old data stays as a
+// fallback until then.
+const cacheVersion = 1
+
 // Init : Inti cache
 func (c *cache) Init() {
+
+	c.Version = cacheVersion
 
 	if c.Schedule == nil {
 		c.Schedule = make(map[string][]EPGoCache)
@@ -108,11 +120,16 @@ func (c *cache) AddSchedule(data *[]byte) {
 
 		for _, p := range sd.Programs {
 
+			epgoCache.ScheduleDate = sd.Metadata.StartDate
 			epgoCache.AirDateTime = p.AirDateTime
 			epgoCache.AudioProperties = p.AudioProperties
 			epgoCache.Duration = p.Duration
 			epgoCache.LiveTapeDelay = p.LiveTapeDelay
 			epgoCache.New = p.New
+			epgoCache.Premiere = p.Premiere
+			epgoCache.PremiereFinale = p.PremiereFinale
+			epgoCache.Signed = p.Signed
+			epgoCache.Multipart = p.Multipart
 			epgoCache.Md5 = p.Md5
 			epgoCache.ProgramID = p.ProgramID
 			epgoCache.Ratings = p.Ratings
@@ -135,7 +152,7 @@ func (c *cache) AddProgram(gzip *[]byte, wg *sync.WaitGroup) {
 		wg.Done()
 	}()
 
-	b, err := gUnzip(*gzip)
+	b, err := decodeSDPayload(*gzip)
 	if err != nil {
 		logger.Error("unable to unzip programs", "error", err)
 		return
@@ -163,10 +180,13 @@ func (c *cache) AddProgram(gzip *[]byte, wg *sync.WaitGroup) {
 		epgoCache.OriginalAirDate = sd.OriginalAirDate
 		epgoCache.ResourceID = sd.ResourceID
 		epgoCache.ShowType = sd.ShowType
+		epgoCache.Movie = sd.Movie
+		epgoCache.Multipart = sd.Multipart
 		epgoCache.Titles = sd.Titles
 		epgoCache.ContentRating = sd.ContentRating
 		epgoCache.Cast = sd.Cast
 		epgoCache.Crew = sd.Crew
+		epgoCache.Md5 = sd.Md5
 
 		c.Program[sd.ProgramID] = epgoCache
 
@@ -182,7 +202,7 @@ func (c *cache) AddMetadata(gzip *[]byte, wg *sync.WaitGroup) {
 		wg.Done()
 	}()
 
-	b, err := gUnzip(*gzip)
+	b, err := decodeSDPayload(*gzip)
 	if err != nil {
 		logger.Error("unable to unzip metadata", "error", err)
 		return
@@ -248,16 +268,26 @@ func (c *cache) GetAllProgramIDs() (programIDs []string) {
 	return
 }
 
+// GetRequiredProgramIDs returns the programs that are not cached yet or
+// whose data changed since they were cached. The schedule carries the md5 of
+// the current program data, which SD changes when it updates a program, for
+// example when an episode title is added after the program was announced.
 func (c *cache) GetRequiredProgramIDs() (programIDs []string) {
 
-	var allProgramIDs = c.GetAllProgramIDs()
+	var seen = make(map[string]bool)
 
-	for _, id := range allProgramIDs {
+	for _, channel := range c.Schedule {
 
-		if _, ok := c.Program[id]; !ok {
+		for _, schedule := range channel {
 
-			if ContainsString(programIDs, id) == -1 {
-				programIDs = append(programIDs, id)
+			if seen[schedule.ProgramID] {
+				continue
+			}
+
+			// Check every airing: any one of them may carry the changed md5.
+			if p, ok := c.Program[schedule.ProgramID]; !ok || !usableProgram(p) || p.Md5 != schedule.Md5 {
+				seen[schedule.ProgramID] = true
+				programIDs = append(programIDs, schedule.ProgramID)
 			}
 
 		}
@@ -284,15 +314,26 @@ func (c *cache) GetRequiredMetaIDs() (metaIDs []string) {
 }
 
 func (c *cache) GetIcon(id string) (i []Icon) {
+	if bestIcon := c.selectIcon(id); bestIcon != nil {
+		if imageURL := programmeImageURL(bestIcon.Src, id); imageURL != "" {
+			bestIcon.Src = imageURL
+			i = append(i, *bestIcon)
+		}
+	}
+	return
+}
+
+// selectIcon returns the preferred icon with its SD URI, without downloading it.
+func (c *cache) selectIcon(id string) (bestIcon *Icon) {
 
 	if m, ok := c.Metadata[id]; ok {
 		// Define preferences for categories and aspect ratios. Lower index = higher preference.
 		categoryPrefs := map[string]int{
-			"Poster Art":  0,
-			"Box Art":     1,
-			"Banner-L1":   2,
-			"Banner-L2":   3,
-			"VOD Art":     4, // Fallback category
+			"Poster Art": 0,
+			"Box Art":    1,
+			"Banner-L1":  2,
+			"Banner-L2":  3,
+			"VOD Art":    4, // Fallback category
 		}
 		aspectPrefs := map[string]int{
 			"16x9": 0,
@@ -303,7 +344,6 @@ func (c *cache) GetIcon(id string) (i []Icon) {
 			"1x1":  5,
 		}
 
-		var bestIcon *Icon
 		bestScore := -1
 
 		for _, iconData := range m.Data {
@@ -322,21 +362,10 @@ func (c *cache) GetIcon(id string) (i []Icon) {
 			if bestScore == -1 || currentScore < bestScore || (currentScore == bestScore && iconData.Width > bestIcon.Width) {
 				bestScore = currentScore
 
-				uri := iconData.URI
-				if uri[0:7] != "http://" && uri[0:8] != "https://" {
-					uri = fmt.Sprintf("https://json.schedulesdirect.org/20141201/image/%s?token=%s", uri, Token)
-				}
-
-				bestIcon = &Icon{Src: uri, Height: iconData.Height, Width: iconData.Width}
+				bestIcon = &Icon{Src: iconData.URI, Height: iconData.Height, Width: iconData.Width}
 			}
 		}
 
-		if bestIcon != nil {
-			if Config.Options.Images.Download {
-				downloadImage(bestIcon.Src, id)
-			}
-			i = append(i, *bestIcon)
-		}
 	}
 	return
 }
@@ -346,15 +375,36 @@ func (c *cache) Open() (err error) {
 	data, err := os.ReadFile(Config.Files.Cache)
 
 	if err != nil {
-		c.Init()
-		c.Save()
-		return nil
+		if os.IsNotExist(err) {
+			c.Init()
+			return nil
+		}
+		return err
 	}
 
-	err = json.Unmarshal(data, &c)
+	var loaded *cache
+	err = json.Unmarshal(data, &loaded)
 	if err != nil {
 		return
 	}
+	if loaded == nil {
+		return fmt.Errorf("cache is null")
+	}
+	c.Lock()
+	defer c.Unlock()
+	c.Channel, c.Program, c.Metadata, c.Schedule = loaded.Channel, loaded.Program, loaded.Metadata, loaded.Schedule
+	c.Token, c.TokenExpires, c.ImageLimitUntil = loaded.Token, loaded.TokenExpires, loaded.ImageLimitUntil
+	c.ScheduleMd5 = loaded.ScheduleMd5
+
+	// Keep the old program data as a fallback, but download it again.
+	if loaded.Version < cacheVersion {
+		for id, p := range c.Program {
+			p.Md5 = ""
+			c.Program[id] = p
+		}
+		c.ScheduleMd5 = nil
+	}
+	c.Version = cacheVersion
 
 	return
 }
@@ -369,7 +419,10 @@ func (c *cache) Save() (err error) {
 		return err
 	}
 
-	err = os.WriteFile(Config.Files.Cache, data, 0644)
+	err = writeAtomic(Config.Files.Cache, 0600, func(w io.Writer) error {
+		_, err := w.Write(data)
+		return err
+	})
 	if err != nil {
 		return
 	}
@@ -377,7 +430,20 @@ func (c *cache) Save() (err error) {
 	return
 }
 
-func (c *cache) CleanUp() {
+// A token can expire during a staged fetch. Persist credentials without
+// publishing the in-progress schedules/programs along with them.
+func (c *cache) saveToken() error {
+	var committed cache
+	if err := committed.Open(); err != nil {
+		return err
+	}
+	c.RLock()
+	committed.Token, committed.TokenExpires = c.Token, c.TokenExpires
+	c.RUnlock()
+	return committed.Save()
+}
+
+func (c *cache) CleanUp() error {
 
 	var count int
 	logger.Info("Clean up Cache", "filename", Config.Files.Cache)
@@ -396,16 +462,12 @@ func (c *cache) CleanUp() {
 
 	}
 
-	c.Channel = make(map[string]EPGoCache)
-	c.Schedule = make(map[string][]EPGoCache)
+	// Keep the selected stations and requested schedule window for scoped
+	// fallback on the next run. GetData replaces/prunes them before publication.
 
 	logger.Info("Clean up Cache", "count", count)
 
-	err := c.Save()
-	if err != nil {
-		logger.Error("unable to save the JSON", "error", err)
-		return
-	}
+	return c.Save()
 }
 
 // Get data from cache
@@ -433,21 +495,19 @@ func (c *cache) GetTitle(id, lang string) (t []Title) {
 	return
 }
 
-func (c *cache) GetSubTitle(id, lang string) (s SubTitle) {
+func (c *cache) GetSubTitle(id, lang string) (s *SubTitle) {
 
 	if p, ok := c.Program[id]; ok {
 
 		if len(p.EpisodeTitle150) != 0 {
 
-			s.Value = p.EpisodeTitle150
-			s.Lang = lang
+			s = &SubTitle{Value: p.EpisodeTitle150, Lang: lang}
 
-		} else {
+		} else if !Config.Options.SubtitleEpisodeTitleOnly {
 
 			for _, d := range p.Descriptions.Description100 {
 
-				s.Value = d.Description
-				s.Lang = d.DescriptionLanguage
+				s = &SubTitle{Value: d.Description, Lang: d.DescriptionLanguage}
 
 			}
 
@@ -492,64 +552,109 @@ func (c *cache) GetDescs(id, subTitle string) (de []Desc) {
 	return
 }
 
-func (c *cache) GetCredits(id string) (cr Credits) {
+// creditRoles maps SD cast and crew roles to XMLTV credits elements.
+var creditRoles = map[string]string{
+	"Director":     "director",
+	"Actor":        "actor",
+	"Voice":        "actor",
+	"Guest Star":   "actor",
+	"Guest Voice":  "actor",
+	"Writer":       "writer",
+	"Screenwriter": "writer",
+	"Producer":     "producer",
+	"Presenter":    "presenter",
+	"Host":         "presenter",
+	"Anchor":       "presenter",
+	"Guest":        "guest",
+	"Self":         "guest",
+	"Contestant":   "guest",
+}
+
+func (c *cache) GetCredits(id string) *Credits {
+
+	var cr Credits
 
 	if Config.Options.Credits {
 
 		if p, ok := c.Program[id]; ok {
 
-			// Crew
-			for _, crew := range p.Crew {
+			add := func(role, name, character string) {
 
-				switch crew.Role {
+				switch creditRoles[role] {
 
-				case "Director":
-					cr.Director = append(cr.Director, Director{Value: crew.Name})
+				case "director":
+					cr.Director = append(cr.Director, Director{Value: name})
 
-				case "Producer":
-					cr.Producer = append(cr.Producer, Producer{Value: crew.Name})
+				case "actor":
+					cr.Actor = append(cr.Actor, Actor{Value: name, Role: character})
 
-				case "Presenter":
-					cr.Presenter = append(cr.Presenter, Presenter{Value: crew.Name})
+				case "writer":
+					cr.Writer = append(cr.Writer, Writer{Value: name})
 
-				case "Writer":
-					cr.Writer = append(cr.Writer, Writer{Value: crew.Name})
+				case "producer":
+					cr.Producer = append(cr.Producer, Producer{Value: name})
+
+				case "presenter":
+					cr.Presenter = append(cr.Presenter, Presenter{Value: name})
+
+				case "guest":
+					cr.Guest = append(cr.Guest, Guest{Value: name})
 
 				}
 
 			}
 
+			// Crew
+			for _, crew := range p.Crew {
+				add(crew.Role, crew.Name, "")
+			}
+
 			// Cast
 			for _, cast := range p.Cast {
-
-				switch cast.Role {
-
-				case "Actor":
-					cr.Actor = append(cr.Actor, Actor{Value: cast.Name, Role: cast.CharacterName})
-
-				}
-
+				add(cast.Role, cast.Name, cast.CharacterName)
 			}
 
 		}
 
 	}
 
-	return
+	if len(cr.Director)+len(cr.Actor)+len(cr.Writer)+len(cr.Producer)+len(cr.Presenter)+len(cr.Guest) == 0 {
+		return nil
+	}
+
+	return &cr
+}
+
+// programTypes are the generic programme types derived from the SD program
+// ID prefix. Clients like MythTV look for exactly these categories.
+var programTypes = map[string]string{
+	"MV": "movie",
+	"EP": "series",
+	"SH": "tvshow",
+	"SP": "sports",
 }
 
 func (c *cache) GetCategory(id string) (ca []Category) {
 
 	if p, ok := c.Program[id]; ok {
 
+		seen := make(map[string]bool)
+		add := func(value string) {
+			if value != "" && !seen[value] {
+				seen[value] = true
+				ca = append(ca, Category{Value: value, Lang: "en"})
+			}
+		}
+
 		for _, g := range p.Genres {
+			add(g)
+		}
 
-			var category Category
-			category.Value = g
-			category.Lang = "en"
+		// SD show type, e.g. "Series", "Feature Film" or "Sports event"
+		add(p.ShowType)
 
-			ca = append(ca, category)
-
+		if len(id) >= 2 {
+			add(programTypes[id[:2]])
 		}
 
 	}
@@ -557,7 +662,9 @@ func (c *cache) GetCategory(id string) (ca []Category) {
 	return
 }
 
-func (c *cache) GetEpisodeNum(id string) (ep []EpisodeNum) {
+// GetEpisodeNum returns the episode numbers of a program. part is the
+// schedule's multipart value; the program's own value is used without it.
+func (c *cache) GetEpisodeNum(id string, part *Multipart) (ep []EpisodeNum) {
 
 	var seaseon, episode int
 
@@ -565,18 +672,34 @@ func (c *cache) GetEpisodeNum(id string) (ep []EpisodeNum) {
 
 		for _, m := range p.Metadata {
 
+			if m.Gracenote.Season <= 0 || m.Gracenote.Episode <= 0 {
+				continue
+			}
 			seaseon = m.Gracenote.Season
 			episode = m.Gracenote.Episode
+			break
 
-			var episodeNum EpisodeNum
+		}
 
-			if seaseon != 0 && episode != 0 {
+		if part == nil {
+			part = p.Multipart
+		}
 
-				episodeNum.Value = fmt.Sprintf("%d.%d.", seaseon-1, episode-1)
-				episodeNum.System = "xmltv_ns"
-				ep = append(ep, episodeNum)
+		var xmltvNS string
+		if seaseon != 0 && episode != 0 {
+			xmltvNS = fmt.Sprintf("%d.%d.", seaseon-1, episode-1)
+		}
+		if part != nil && part.PartNumber > 0 {
+			if xmltvNS == "" {
+				xmltvNS = ".."
 			}
-
+			xmltvNS += strconv.Itoa(part.PartNumber - 1)
+			if part.TotalParts >= part.PartNumber {
+				xmltvNS += "/" + strconv.Itoa(part.TotalParts)
+			}
+		}
+		if xmltvNS != "" {
+			ep = append(ep, EpisodeNum{System: "xmltv_ns", Value: xmltvNS})
 		}
 
 		if seaseon != 0 && episode != 0 {
@@ -588,31 +711,18 @@ func (c *cache) GetEpisodeNum(id string) (ep []EpisodeNum) {
 
 		}
 
-		// ✅ Fixed dd_progid formatting
-		if len(ep) == 0 {
-
-			var episodeNum EpisodeNum
-
-			switch id[0:2] {
-
-			case "EP":
-				// Correct format: keep prefix, add dot + episode part if present
-				if len(id) > 10 {
-					episodeNum.Value = fmt.Sprintf("%s.%s", id[:10], id[10:])
-				} else {
-					episodeNum.Value = id + ".0000"
-				}
-
-			case "SH", "MV":
-				episodeNum.Value = id + ".0000"
-
-			default:
-				episodeNum.Value = id
+		// Identity is independent of season/episode display metadata. Do not
+		// change it when late-arriving Gracenote numbering becomes available.
+		if id != "" {
+			value := id
+			if len(id) > 10 {
+				value = id[:10] + "." + id[10:]
+			} else if strings.HasPrefix(id, "EP") || strings.HasPrefix(id, "SH") || strings.HasPrefix(id, "MV") {
+				value += ".0000"
 			}
-
-			episodeNum.System = "dd_progid"
-			ep = append(ep, episodeNum)
-
+			// TVHeadend parses tags in order: dd_progid supplies an episode
+			// ordinal, so actual season/episode numbering must follow it.
+			ep = append([]EpisodeNum{{System: "dd_progid", Value: value}}, ep...)
 		}
 
 		if len(p.OriginalAirDate) > 0 {
@@ -634,10 +744,91 @@ func (c *cache) GetPreviouslyShown(id string) (prev *PreviouslyShown) {
 	prev = &PreviouslyShown{}
 
 	if p, ok := c.Program[id]; ok {
-		prev.Start = p.OriginalAirDate
+		prev.Start = xmltvDate(p.OriginalAirDate)
 	}
 
 	return
+}
+
+// xmltvDate converts an SD date (YYYY-MM-DD) to the XMLTV form (YYYYMMDD).
+// TVHeadend reads the dashes of the SD form as a time zone offset.
+func xmltvDate(date string) string {
+	t, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return ""
+	}
+	return t.Format("20060102")
+}
+
+// GetDate returns the XMLTV date of a program: the year of a movie, otherwise
+// the original air date.
+func (c *cache) GetDate(id string) string {
+
+	if p, ok := c.Program[id]; ok {
+		if p.Movie != nil && len(p.Movie.Year) == 4 {
+			if _, err := strconv.Atoi(string(p.Movie.Year)); err == nil {
+				return string(p.Movie.Year)
+			}
+		}
+		return xmltvDate(p.OriginalAirDate)
+	}
+
+	return ""
+}
+
+// GetStarRating returns the first quality rating of a movie, for example 3/4.
+func (c *cache) GetStarRating(id string) (sr []StarRating) {
+
+	if p, ok := c.Program[id]; ok && p.Movie != nil {
+		for _, q := range p.Movie.QualityRating {
+			if q.Rating != "" && q.MaxRating != "" {
+				return []StarRating{{System: string(q.RatingsBody), Value: string(q.Rating) + "/" + string(q.MaxRating)}}
+			}
+		}
+	}
+
+	return
+}
+
+// GetSubtitles maps SD accessibility properties to XMLTV subtitles.
+func GetSubtitles(s EPGoCache) (st []Subtitles) {
+
+	var seen = make(map[string]bool)
+	add := func(t string) {
+		if !seen[t] {
+			seen[t] = true
+			st = append(st, Subtitles{Type: t})
+		}
+	}
+
+	for _, a := range s.AudioProperties {
+		switch a {
+		case "cc":
+			add("teletext")
+		case "subtitled":
+			add("onscreen")
+		}
+	}
+	if s.Signed {
+		add("deaf-signed")
+	}
+
+	return
+}
+
+// GetPremiere returns the premiere element of an airing. SD's premiere flag
+// marks a movie or miniseries premiere and is always used. TVHeadend treats a
+// premiere as new, so SD's premiere/finale text is only used on new airings.
+func GetPremiere(s EPGoCache) *Premiere {
+
+	if strings.Contains(s.PremiereFinale, "Premiere") && s.New {
+		return &Premiere{Value: s.PremiereFinale}
+	}
+	if s.Premiere {
+		return &Premiere{}
+	}
+
+	return nil
 }
 
 func (c *cache) GetRating(id, countryCode string) (ra []Rating) {
@@ -715,13 +906,89 @@ func (c *cache) GetRating(id, countryCode string) (ra []Rating) {
 	return
 }
 
-func downloadImage(imageURL, programID string) (string, error) {
+// imageDownloadsStopped is set when Schedules Direct tells us to stop
+// requesting images (daily limit reached, token or account problem).
+// Every further request would count against the account, so no more image
+// requests are sent for the rest of the run.
+var imageDownloadsStopped bool
 
-	folderImage := Config.Options.Images.Path
+// imageFailures remembers images that failed in this run, so programmes
+// sharing an image do not request it again. Both are guarded by imageMu
+// because images are downloaded in parallel.
+var imageFailures = map[string]error{}
+var imageMu sync.Mutex
+var imageStateError error
 
+func imagesStopped() bool {
+	imageMu.Lock()
+	defer imageMu.Unlock()
+	return imageDownloadsStopped
+}
+
+const sdImageURL = "https://json.schedulesdirect.org/20141201/image/"
+
+func isAbsoluteURL(uri string) bool {
+	return strings.HasPrefix(uri, "http://") || strings.HasPrefix(uri, "https://")
+}
+
+// imageFilename returns the local file name for an image URI. SD image URIs
+// are content hashes, so programs sharing an image (e.g. all episodes of a
+// series) share one file and it is only downloaded once.
+func imageFolder() string {
 	if Config.Options.Images.Path == "" {
-		folderImage = "images"
+		return "images"
 	}
+	return Config.Options.Images.Path
+}
+
+func imageFilename(uri string) string {
+	if u, err := url.Parse(uri); err == nil {
+		uri = u.Path
+	}
+	return path.Base(uri)
+}
+
+// imageStopStatus are HTTP statuses without an SD error code after which image
+// downloads must stop for the current run.
+var imageStopStatus = map[int]bool{
+	http.StatusUnauthorized:    true,
+	http.StatusForbidden:       true,
+	http.StatusTooManyRequests: true,
+}
+
+// sdImageLimitCodes are the daily image limit errors. The limit stays reached
+// until SD resets the counter, so later runs that day must not ask again.
+var sdImageLimitCodes = map[int]bool{
+	5002: true, // MAX_IMAGE_DOWNLOADS
+	5003: true, // MAX_IMAGE_DOWNLOADS_TRIAL
+	5004: true, // MAX_IMAGE_INVALID_URI_ERRORS (rolling 24h, see below)
+}
+
+// imageLimitReset returns when SD resets the daily image counter (00:00Z).
+func imageLimitReset(now time.Time) time.Time {
+	return now.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
+}
+
+// downloadImage downloads an image into the image folder and returns the
+// file name. Existing files and failed images are not requested again.
+func downloadImage(uri string) (string, error) {
+	filename, err := fetchImage(uri)
+	if err != nil && filename != "" {
+		imageMu.Lock()
+		if !imageDownloadsStopped {
+			imageFailures[filename] = err
+		}
+		imageMu.Unlock()
+		return "", err
+	}
+	return filename, err
+}
+
+// fetchImage returns the image file name, also with an error, so that
+// downloadImage can remember the failure.
+func fetchImage(uri string) (string, error) {
+
+	folderImage := imageFolder()
 
 	// Create the "images" folder if it doesn't exist
 	if _, err := os.Stat(folderImage); os.IsNotExist(err) {
@@ -731,32 +998,119 @@ func downloadImage(imageURL, programID string) (string, error) {
 		}
 	}
 
-	// Extract filename from URL
-	filename := programID + ".jpg"
+	filename := imageFilename(uri)
+	if filename == "" || filename == "." || filename == ".." || filename == "/" {
+		return "", fmt.Errorf("invalid image uri: %q", uri)
+	}
 	filePath := filepath.Join(folderImage, filename)
 	if _, err := os.Stat(filePath); err == nil {
-		return filePath, nil
+		return filename, nil
 	}
 
-	resp, err := http.Get(imageURL)
-	if err != nil {
-		return "", fmt.Errorf("failed to download image: %w", err)
+	imageMu.Lock()
+	failure, failed := imageFailures[filename]
+	stopped := imageDownloadsStopped
+	imageMu.Unlock()
+	if failed {
+		return "", failure
 	}
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("failed to download image: %s", resp.Status)
+	if stopped {
+		return "", fmt.Errorf("image downloads stopped for this run")
+	}
+
+	imageURL := uri
+	if !isAbsoluteURL(uri) {
+		// The token goes into the query string rather than a header, so it is
+		// not forwarded when SD redirects to the storage bucket.
+		imageURL = sdImageURL + uri + "?token=" + url.QueryEscape(Token)
+	}
+
+	req, err := http.NewRequest("GET", imageURL, nil)
+	if err != nil {
+		return filename, fmt.Errorf("failed to create image request for %s: %w", filename, err)
+	}
+	req.Header.Set("User-Agent", AppName)
+
+	// Copy the client to retain custom transports without an unbounded body read.
+	client := *http.DefaultClient
+	client.Timeout = 2 * time.Minute
+	resp, err := client.Do(req)
+	if err != nil {
+		return filename, fmt.Errorf("failed to download image %s: %w", filename, redactToken(err))
 	}
 	defer resp.Body.Close()
 
-	out, err := os.Create(filePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to create file: %w", err)
+	// SD reports errors (including the daily image limit) as JSON, sometimes
+	// with HTTP 200. Only save responses that are actually images.
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "image/") {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+		var sdErr struct {
+			Code     int    `json:"code"`
+			Response string `json:"response"`
+			Message  string `json:"message"`
+		}
+		sdCode := json.Unmarshal(body, &sdErr) == nil && sdErr.Code != 0
+		// Only a missing image is specific to one URI. Any other SD error, and
+		// throttling or authentication failures without one, affect all images.
+		if sdCode && sdErr.Code != 5000 || !sdCode && imageStopStatus[resp.StatusCode] {
+			imageMu.Lock()
+			imageDownloadsStopped = true
+			if sdImageLimitCodes[sdErr.Code] {
+				until := imageLimitReset(time.Now()).Unix()
+				if sdErr.Code == 5004 {
+					until = time.Now().Add(24 * time.Hour).Unix()
+				}
+				Cache.Lock()
+				changed := Cache.ImageLimitUntil != until
+				Cache.ImageLimitUntil = until
+				Cache.Unlock()
+				// Persist before another worker or a later generation can proceed.
+				// A failed XML write/termination must not forget the account cap.
+				if changed && Config.Files.Cache != "" {
+					imageStateError = Cache.Save()
+				}
+			}
+			imageMu.Unlock()
+			logger.Warn("Schedules Direct returned an error, no more images will be requested in this run",
+				"status", resp.StatusCode, "code", sdErr.Code, "response", sdErr.Response, "message", sdErr.Message)
+		}
+		if sdCode {
+			return filename, fmt.Errorf("schedules direct error %d (%s) for image %s", sdErr.Code, sdErr.Response, filename)
+		}
+		return filename, fmt.Errorf("unexpected response for image %s: %s, content type %q", filename, resp.Status, resp.Header.Get("Content-Type"))
 	}
-	defer out.Close()
 
-	_, err = io.Copy(out, resp.Body)
+	// Write to a temporary file first so an interrupted download never
+	// leaves a truncated image that would be served forever.
+	tmp, err := os.CreateTemp(folderImage, filename+".*.tmp")
 	if err != nil {
-		return "", fmt.Errorf("failed to save image: %w", err)
+		return filename, fmt.Errorf("failed to create file: %w", err)
+	}
+	_, err = io.Copy(tmp, resp.Body)
+	closeErr := tmp.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+		return filename, fmt.Errorf("failed to save image %s: %w", filename, err)
+	}
+	if err = os.Chmod(tmp.Name(), 0644); err != nil {
+		os.Remove(tmp.Name())
+		return filename, fmt.Errorf("failed to save image %s: %w", filename, err)
+	}
+	if err = os.Rename(tmp.Name(), filePath); err != nil {
+		os.Remove(tmp.Name())
+		return filename, fmt.Errorf("failed to save image %s: %w", filename, err)
 	}
 
-	return filePath, nil
+	return filename, nil
+}
+
+// redactToken removes the SD token from errors that contain the request URL.
+func redactToken(err error) error {
+	if Token == "" {
+		return err
+	}
+	return fmt.Errorf("%s", strings.ReplaceAll(err.Error(), Token, "REDACTED"))
 }

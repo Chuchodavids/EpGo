@@ -13,10 +13,14 @@ Options:
     Live and New icons: false
     Schedule Days: 1
     Subtitle into Description: false
+    Subtitle only from episode titles: false
     Insert credits tag into XML file: false
     Images:
         Download Images from Schedules Direct: false
+        Insert typed image tags into XML file: false
         Image Path: ""
+        Delete images unused for days. 0 to keep all: 0
+        Image links as local files: false
         The MovieDB:
             Enable: false
             Api Key: ""

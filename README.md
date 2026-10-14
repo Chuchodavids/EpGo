@@ -162,10 +162,14 @@ Options:
     Live and New icons: false
     Schedule Days: 1
     Subtitle into Description: false
+    Subtitle only from episode titles: false
     Insert credits tag into XML file: false
     Images:
         Download Images from Schedules Direct: false
+        Insert typed image tags into XML file: false
         Image Path: ""
+        Delete images unused for days. 0 to keep all: 0
+        Image links as local files: false
         The MovieDB:
             Enable: false
             Api Key: ""
@@ -189,6 +193,8 @@ Station:
 Cache: /app/file.json  
 XMLTV: /app/xml  
 ```
+
+The cache and XMLTV files are written to a temporary file in the same folder first and then renamed, so readers never see a half-written file. The folder must be writable. A symlinked file is updated where the link points. The file never becomes more permissive than before (the XMLTV file at most `0644`, the cache `0600`) and keeps, where allowed, its owner and group. A file that is bind-mounted into a container on its own cannot be renamed over; it is then rewritten in place, which is not atomic: readers can see a partial file, and a failed write can leave it truncated. Mount the folder instead of the single file if that matters.
 
 ### Server: (Can be customized)
 
@@ -249,15 +255,35 @@ Alan zieht aus, da seine Freundin Kandi und er in Las Vegas eine Million Dollar 
 
 ---
 
+```yaml
+Subtitle only from episode titles: false
+```
+
+Schedules Direct only has episode titles for some programmes. For the others, EPGo uses the short description as the subtitle.
+
+**true:** The subtitle is only set from the episode title. Programmes without one get no subtitle. Useful for clients that use the subtitle in recording file names or for duplicate detection.
+
+---
+
 ### Images: (Can be customized)
 
 ```yaml
 Download Images from Schedules Direct: false
+Insert typed image tags into XML file: false
 Image Path: ""
+Delete images unused for days. 0 to keep all: 0
+Image links as local files: false
 ```
 
 -   **Download Images from Schedules Direct**: `true` or `false`. If `true`, images will be downloaded to the `Image Path`. If `Image Path` is not set, it will default to a folder named `images`.
--   **Image Path**: The path where the images will be downloaded.
+-   **Image Path**: The path where the images will be downloaded. If Schedules Direct reports the daily image limit, no more images are requested until it resets the counter at 00:00 UTC, also in later runs.
+-   **Delete images unused for days. 0 to keep all**: Defaults to `0`, which never deletes images. With a number of days, each run deletes downloaded images that no programme in the guide has used for that many days. Files that are not images are left alone. If a run finds no images at all, nothing is deleted. Only the guide counts as use: if a client keeps image links, like Tvheadend does for recordings, update the modification time of those files before each run or they are deleted too.
+-   **Image links as local files**: Defaults to `false`, which links images through the image server (`http://<Server Address>:<Port>/<file>`). With `true`, images are linked as `file://` URLs to the `Image Path`, for clients on the same machine that serve local images themselves (Tvheadend serves `file://` images to its clients). The image server is not needed then.
+-   **Insert typed image tags into XML file**: Defaults to `false`. With this and **Download Images from Schedules Direct** enabled, adds XMLTV `<image>` elements alongside the unchanged `<icon>` selection. Images use the same local image server URLs and download limits as icons; shared files are downloaded only once. Failed downloads are omitted. Any Schedules Direct error other than a missing image, and HTTP 401, 403 or 429 responses, stop further downloads for the run (already cached files remain usable).
+
+Typed images select Episode-tier Iconic art for `still`, Season-tier Iconic art (falling back to Series) for `backdrop`, and Season-tier Banner-L1 art (falling back to Series) for `poster`. Movies use Poster Art for `poster` and their Iconic art for `backdrop`. Sport and team events without Iconic art use Backdrop-Sports for `backdrop`; other Sport Event/Team Event art is not mapped. Missing types are omitted; The MovieDB fallback still applies only to `<icon>`.
+
+Within each tier, selection prefers 16:9, then 2:3, 4:3, 3:4, 2:1 and square images; movie posters prefer 2:3 before 16:9. Other aspects are a last resort. The largest width wins within an aspect, like the icon selection. Each image has `system="schedulesdirect"`, orientation from its dimensions (`P` portrait or `L` landscape; square uses `L`), and XMLTV size `1` for a largest dimension below 200px, `2` for 200–400px, or `3` above 400px. URLs never contain the Schedules Direct token.
 
 #### The MovieDB
 
@@ -278,7 +304,7 @@ The TMDB cache file (default: `config_tmdb_cache.json`) persists search results 
 Insert credits tag into XML file: false
 ```
 
-**true:** Adds the credits (director, actor, producer, writer) to the program information, if available.
+**true:** Adds the credits (director, actor, writer, producer, presenter, guest) to the program information, if available. Hosts and anchors are written as presenters; guests, contestants and people appearing as themselves as guests.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -464,7 +490,31 @@ A `cronjob` file with these examples is included in the repository.
 
 ## Cache Cleanup
 
-After each XMLTV generation, stale program and metadata entries are automatically purged from the cache file. This keeps the cache size manageable without manual intervention.
+After each XMLTV generation, programme and metadata entries no longer referenced
+by the selected stations' schedule window are purged. Channels and schedules
+within that window remain cached for use when part of a later request fails.
+
+### Partial updates
+
+An unavailable station/day or programme does not block updates for the rest of
+the guide. Each valid station/day replaces its previous schedule; failed days
+reuse cached airings where available. Failed programme records reuse cached
+details for the same programme ID. Without usable cached details, that airing is
+omitted rather than replaced with a "No EPG Info" event. Failed records remain
+eligible for the next scheduled fetch.
+
+Partial publication succeeds and logs `EPG update published with gaps`, with
+counts for cached/missing schedule days, cached/missing programmes and metadata
+failures. There are no extra retries for queued or missing individual records.
+Artwork metadata failures can leave a usable text guide.
+
+Authentication, account, quota and other global API errors stop further SD
+requests, including image downloads. Usable data already fetched can still be
+published, and existing image files remain available. If there is no usable fresh
+schedule or programme data, the existing guide stays
+untouched and the run fails. Guide replacement remains atomic, so a failed write
+also leaves the previous file intact. Older cache files are supported, but days
+already removed by an older version cannot provide fallback until fetched again.
 
 ### Create the XMLTV file using the command line (CLI): 
 

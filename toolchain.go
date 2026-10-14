@@ -34,11 +34,11 @@ func gUnzip(data []byte) (res []byte, err error) {
 
 	b := bytes.NewBuffer(data)
 
-	var r io.Reader
-	r, err = gzip.NewReader(b)
+	r, err := gzip.NewReader(b)
 	if err != nil {
 		return
 	}
+	defer r.Close()
 
 	var resB bytes.Buffer
 	_, err = resB.ReadFrom(r)
@@ -49,4 +49,11 @@ func gUnzip(data []byte) (res []byte, err error) {
 	res = resB.Bytes()
 
 	return
+}
+
+func decodeSDPayload(data []byte) ([]byte, error) {
+	if len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b {
+		return gUnzip(data)
+	}
+	return data, nil
 }

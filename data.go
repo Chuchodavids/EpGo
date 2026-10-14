@@ -6,236 +6,322 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
-// Update : Update data from Schedules Direct and create the XMLTV file
-func (sd *SD) Update(filename string) (err error) {
-
+// Update publishes usable fresh data with cached fallback for failed portions.
+func (sd *SD) Update(filename string) error {
 	Config.File = strings.TrimSuffix(filename, filepath.Ext(filename))
-
-	// reads the Config file
-	_, err = os.ReadFile(fmt.Sprintf("%s.yaml", Config.File))
-
-	if err != nil {
-		return
-	}
-
-	err = Config.Open()
-	if err != nil {
-		return
-	}
-
-	// loads default functions and variables
-	err = sd.Init()
-	if err != nil {
+	// Headless runs must not silently create an empty interactive config.
+	if _, err := os.ReadFile(Config.File + ".yaml"); err != nil {
 		return err
 	}
-
-	// load cache before login to check for cached token
-	err = Cache.Open()
-	if err != nil {
-		logger.Error("unable to open the cache", "error", err)
+	if err := Config.Open(); err != nil {
 		return err
 	}
-
-	err = sd.Login()
-	if err != nil {
+	if err := sd.Init(); err != nil {
 		return err
 	}
-
-	err = Cache.Save()
-	if err != nil {
-		logger.Warn("unable to save token to cache", "error", err)
-	}
-
-	err = sd.Status()
-	if err != nil{
+	if err := Cache.Open(); err != nil {
 		return err
 	}
-
-	sd.GetData()
-
+	if err := sd.Login(); err != nil {
+		return err
+	}
+	if err := Cache.Save(); err != nil {
+		return fmt.Errorf("save token: %w", err)
+	}
+	if err := sd.Status(); err != nil {
+		return err
+	}
+	if err := sd.GetData(); err != nil {
+		return err
+	}
 	runtime.GC()
-
-	err = CreateXMLTV(filename)
-	if err != nil {
-		logger.Error("unable to create the XMLTV file", "error", err)
-		return
+	if err := createXMLTV(filename, sd.update.FetchStopped == nil); err != nil {
+		return err
 	}
-
-	Cache.CleanUp()
-
+	sd.update.log()
+	if err := Cache.CleanUp(); err != nil {
+		return err
+	}
 	runtime.GC()
-
 	if Config.Server.Enable {
-		imagePath := Config.Options.Images.Path
-		if imagePath == "" {
-			imagePath = "images"
-		}
-		go StartServer(imagePath, Config.Server.Port)
+		go StartServer(imageFolder(), Config.Server.Port)
 		select {}
 	}
-
-	return
+	return nil
 }
 
-// GetData : Get data from Schedules Direct
-func (sd *SD) GetData() {
-
-	var err error
-	var wg sync.WaitGroup
-	var count = 0
-
-	err = Cache.Open()
-	if err != nil {
-		logger.Error("unable to open the cache", "error", err)
-		return
+// GetData stages a bounded guide window. Failures are scoped to station/dates
+// and programme IDs; global session/account errors still stop provider calls.
+// A fresh station/date replaces its old schedule, rather than appending to it.
+func (sd *SD) GetData() error {
+	if err := Cache.Open(); err != nil {
+		return err
 	}
+	sd.update = updateSummary{}
+	previousChannels, previousSchedules := Cache.Channel, Cache.Schedule
 	Cache.Init()
-
-	// Channel list
-	Cache.Channel = make(map[string]EPGoCache)
-
-	var lineup []string
-
+	Cache.Schedule = make(map[string][]EPGoCache)
+	if len(Config.Station) == 0 || Config.Options.Schedule <= 0 {
+		return fmt.Errorf("no stations or schedule days configured")
+	}
+	for _, station := range Config.Station {
+		if old, ok := previousChannels[station.ID]; ok {
+			Cache.Channel[station.ID] = old
+		} else {
+			name := station.Name
+			if name == "" {
+				name = station.ID
+			}
+			Cache.Channel[station.ID] = EPGoCache{StationID: station.ID, Name: name, Callsign: name}
+		}
+	}
+	var lineups []string
 	for _, l := range sd.Resp.Status.Lineups {
-		lineup = append(lineup, l.Lineup)
+		lineups = append(lineups, l.Lineup)
 	}
-
-	for _, id := range lineup {
-
-		sd.Req.Parameter = fmt.Sprintf("/%s", id)
-		sd.Req.Type = "GET"
-
-		sd.Lineups()
-
+	for _, id := range lineups {
+		sd.Req.Parameter, sd.Req.Type = "/"+id, "GET"
+		err := sd.update.FetchStopped
+		if err == nil {
+			err = sd.Lineups()
+		}
+		if err != nil {
+			if stopFetching(err) {
+				sd.update.FetchStopped = err
+			}
+			logger.Warn("Lineup unavailable; using cached/configured channels", "lineup", id, "error", err)
+			sd.update.LineupFailures++
+			continue
+		}
 		Cache.AddStations(&sd.Resp.Body, id)
-
 	}
 
-	// Schedule
-	logger.Info("Download Schedule", "days", Config.Options.Schedule)
-
-	var limit = 5000
-
-	var days = make([]string, 0)
-	var channels = make([]interface{}, 0)
-
-	for i := 0; i < Config.Options.Schedule; i++ {
-		var nextDay = time.Now().Add(time.Hour * time.Duration(24*i))
-		days = append(days, nextDay.Format("2006-01-02"))
+	// SD dates are UTC; local dates near midnight can omit today's UTC data.
+	days := make([]string, Config.Options.Schedule)
+	now := time.Now().UTC()
+	for i := range days {
+		days[i] = now.AddDate(0, 0, i).Format("2006-01-02")
 	}
+	previousMd5 := Cache.ScheduleMd5
+	Cache.ScheduleMd5 = make(map[string]map[string]string)
+	keepMd5 := func(key scheduleKey, md5 string) {
+		if md5 == "" {
+			return
+		}
+		if Cache.ScheduleMd5[key.station] == nil {
+			Cache.ScheduleMd5[key.station] = make(map[string]string)
+		}
+		Cache.ScheduleMd5[key.station][key.date] = md5
+	}
+	freshDays := make(map[scheduleKey]bool)
+	for start := 0; start < len(Config.Station); start += 5000 {
+		end := min(start+5000, len(Config.Station))
+		channels := append([]channel(nil), Config.Station[start:end]...)
+		for i := range channels {
+			channels[i].Date = days
+		}
 
-	for i, channel := range Config.Station {
-
-		count++
-
-		channel.Date = days
-		channels = append(channels, channel)
-
-		if count == limit || i == len(Config.Station)-1 {
-
-			sd.Req.Data, err = json.Marshal(channels)
+		// Only download the days whose schedule changed since it was cached.
+		var unchanged map[scheduleKey]string
+		err := sd.update.FetchStopped
+		if err == nil {
+			if sd.Req.Data, err = json.Marshal(channels); err != nil {
+				return err
+			}
+			err = sd.ScheduleMD5()
+			if err == nil {
+				unchanged, err = unchangedSchedules(sd.Resp.Body, channels, previousMd5)
+			}
 			if err != nil {
-				logger.Error("unable to marshal the JSON", "error", err)
-				return
-			}
-
-			sd.Schedule()
-
-			wg.Add(1)
-			go func() {
-
-				Cache.AddSchedule(&sd.Resp.Body)
-
-				wg.Done()
-
-			}()
-
-			count = 0
-			channels = make([]interface{}, 0)
-
-		}
-
-	}
-
-	wg.Wait()
-
-	// Program and Metadata
-	count = 0
-	sd.Req.Data = []byte{}
-
-	var types = []string{"programs", "metadata"}
-	var programIds = Cache.GetRequiredProgramIDs()
-	var allIDs = Cache.GetAllProgramIDs()
-	var programs = make([]interface{}, 0)
-
-	logger.Info("Download Program Informations", "new", len(programIds), "cached", len(allIDs)-len(programIds))
-
-	for _, t := range types {
-
-		switch t {
-		case "metadata":
-			sd.Req.URL = fmt.Sprintf("%smetadata/programs/", sd.BaseURL)
-			sd.Req.Call = "metadata"
-			programIds = Cache.GetRequiredMetaIDs()
-			limit = 500
-			logger.Info("Download missing Metadata", "count", len(programIds))
-
-		case "programs":
-
-			sd.Req.URL = fmt.Sprintf("%sprograms", sd.BaseURL)
-			sd.Req.Call = "programs"
-			limit = 5000
-
-		}
-
-		for i, p := range programIds {
-
-			count++
-
-			programs = append(programs, p)
-
-			if count == limit || i == len(programIds)-1 {
-
-				sd.Req.Data, err = json.Marshal(programs)
-				if err != nil {
-					logger.Error("unable to marshal the JSON", "error", err)
-					return
+				if stopFetching(err) {
+					sd.update.FetchStopped = err
 				}
+				logger.Warn("Schedule md5 unavailable; downloading changed days", "error", err)
+			}
+		}
+		// The md5 only describes the cache if the cached day still has airings.
+		for key := range unchanged {
+			if len(cachedDay(previousSchedules[key.station], key.date)) == 0 {
+				delete(unchanged, key)
+			}
+		}
+		var request []channel
+		for _, ch := range channels {
+			var dates []string
+			for _, day := range ch.Date {
+				if _, ok := unchanged[scheduleKey{ch.ID, day}]; !ok {
+					dates = append(dates, day)
+				}
+			}
+			if len(dates) > 0 {
+				ch.Date = dates
+				request = append(request, ch)
+			}
+		}
 
-				err := sd.Program()
-				if err != nil {
-					logger.Error("unable to download the programs", "error", err)
-				} else {
-					wg.Add(1)
-
-					switch t {
-					case "metadata":
-						go Cache.AddMetadata(&sd.Resp.Body, &wg)
-
-					case "programs":
-						go Cache.AddProgram(&sd.Resp.Body, &wg)
-
+		fresh, rangeEnds := map[scheduleKey]SDSchedule{}, map[scheduleKey]bool{}
+		err = sd.update.FetchStopped
+		if err == nil && len(request) > 0 {
+			if sd.Req.Data, err = json.Marshal(request); err != nil {
+				return err
+			}
+			err = sd.Schedule()
+			if err == nil {
+				fresh, rangeEnds, err = selectSchedules(sd.Resp.Body, request)
+			}
+		}
+		if err != nil {
+			if stopFetching(err) {
+				sd.update.FetchStopped = err
+			}
+			logger.Warn("Schedule batch unavailable; using cached days", "error", err)
+		}
+		for _, ch := range channels {
+			for _, day := range days {
+				key := scheduleKey{ch.ID, day}
+				if md5, ok := unchanged[key]; ok {
+					Cache.Schedule[ch.ID] = append(Cache.Schedule[ch.ID], cachedDay(previousSchedules[ch.ID], day)...)
+					keepMd5(key, md5)
+					freshDays[key] = true
+					sd.update.UnchangedScheduleDays++
+					continue
+				}
+				if schedule, ok := fresh[key]; ok {
+					body, err := json.Marshal([]SDSchedule{schedule})
+					if err != nil {
+						return err
 					}
+					Cache.AddSchedule(&body)
+					keepMd5(key, schedule.Metadata.Md5)
+					freshDays[key] = true
+					sd.update.FreshScheduleDays++
+					continue
 				}
-
-				count = 0
-				programs = make([]interface{}, 0)
-				wg.Wait()
-
+				fallback := cachedDay(previousSchedules[ch.ID], day)
+				if len(fallback) > 0 {
+					Cache.Schedule[ch.ID] = append(Cache.Schedule[ch.ID], fallback...)
+					keepMd5(key, previousMd5[ch.ID][day])
+					sd.update.CachedScheduleDays++
+				} else if !rangeEnds[key] {
+					sd.update.MissingScheduleDays++
+				}
+				if !rangeEnds[key] {
+					logger.Warn("Schedule day unavailable", "station", ch.ID, "date", day, "cached_airings", len(fallback))
+				}
 			}
-
 		}
-
 	}
 
-	err = Cache.Save()
-	if err != nil {
-		logger.Error("unable to save the JSON", "error", err)
-		return
+	freshPrograms := make(map[string]bool)
+	for _, kind := range []string{"programs", "metadata"} {
+		ids, limit := Cache.GetRequiredProgramIDs(), 5000
+		sd.Req.URL = sd.BaseURL + "programs"
+		if kind == "metadata" {
+			if !hasUsableUpdate(freshDays, freshPrograms) {
+				if sd.update.FetchStopped != nil {
+					return fmt.Errorf("no usable fresh schedule or programme data; keeping previous guide: %w", sd.update.FetchStopped)
+				}
+				return fmt.Errorf("no usable fresh schedule or programme data; keeping previous guide")
+			}
+			ids, limit = Cache.GetRequiredMetaIDs(), 500
+			sd.Req.URL = sd.BaseURL + "metadata/programs/"
+		}
+		for start := 0; start < len(ids); start += limit {
+			batch := ids[start:min(start+limit, len(ids))]
+			var err error
+			sd.Req.Data, err = json.Marshal(batch)
+			if err != nil {
+				return err
+			}
+			var good map[string]json.RawMessage
+			var notFound map[string]bool
+			err = sd.update.FetchStopped
+			if err == nil {
+				err = sd.Program()
+				if err == nil {
+					good, notFound, err = selectPrograms(sd.Resp.Body, batch, kind == "metadata")
+				}
+			}
+			if err != nil {
+				if stopFetching(err) {
+					sd.update.FetchStopped = err
+				}
+				logger.Warn("Data batch unavailable; using cached data", "kind", kind, "error", err)
+			}
+			var entries []json.RawMessage
+			for _, id := range batch {
+				if raw, ok := good[id]; ok {
+					entries = append(entries, raw)
+					if kind == "programs" {
+						freshPrograms[id] = true
+					}
+				} else if kind == "programs" {
+					cached := usableProgram(Cache.Program[id])
+					if cached {
+						sd.update.CachedPrograms++
+					} else {
+						sd.update.MissingPrograms++
+					}
+					logger.Warn("Programme unavailable", "programID", id, "cached", cached)
+				} else if notFound[id] {
+					sd.update.NoArtwork++
+				} else {
+					sd.update.MetadataFailures++
+				}
+			}
+			body, err := json.Marshal(entries)
+			if err != nil {
+				return err
+			}
+			var wg sync.WaitGroup
+			wg.Add(1)
+			if kind == "programs" {
+				Cache.AddProgram(&body, &wg)
+			} else {
+				Cache.AddMetadata(&body, &wg)
+			}
+		}
 	}
+
+	for station, airings := range Cache.Schedule {
+		var fresh []EPGoCache
+		for _, airing := range airings {
+			if usableProgram(Cache.Program[airing.ProgramID]) {
+				if freshDays[scheduleKey{station, airingDate(airing)}] {
+					fresh = append(fresh, airing)
+				}
+			}
+		}
+		var merged []EPGoCache
+		for _, airing := range airings {
+			// A fresh late-night event may overlap tomorrow's cached schedule.
+			// Prefer the fresh event without inventing new timings for stale ones.
+			if day := airingDate(airing); !freshDays[scheduleKey{station, day}] && overlapsAny(airing, fresh) {
+				// The cached day no longer matches its md5; download it again.
+				delete(Cache.ScheduleMd5[station], day)
+				continue
+			}
+			merged = append(merged, airing)
+		}
+		sort.Slice(merged, func(i, j int) bool { return merged[i].AirDateTime.Before(merged[j].AirDateTime) })
+		Cache.Schedule[station] = merged
+	}
+	return Cache.Save()
+}
+
+// cachedDay returns the usable cached airings of one station/date.
+func cachedDay(airings []EPGoCache, day string) (cached []EPGoCache) {
+	for _, airing := range airings {
+		if airingDate(airing) == day && airing.ProgramID != "" && !airing.AirDateTime.IsZero() && airing.Duration > 0 {
+			airing.ScheduleDate = day
+			cached = append(cached, airing)
+		}
+	}
+	return
 }

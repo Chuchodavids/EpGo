@@ -14,6 +14,18 @@ type cache struct {
 	Token        string `json:"Token,omitempty"`
 	TokenExpires int64  `json:"TokenExpires,omitempty"`
 
+	// ImageLimitUntil is when SD resets the daily image counter after an
+	// earlier run reached the limit. No images are requested before then.
+	ImageLimitUntil int64 `json:"ImageLimitUntil,omitempty"`
+
+	// ScheduleMd5 is the SD md5 of each cached station/date schedule. Days
+	// whose md5 did not change are not downloaded again.
+	ScheduleMd5 map[string]map[string]string `json:"ScheduleMd5,omitempty"`
+
+	// Version is the cache format. Programs cached by an older format are
+	// downloaded again because they lack fields read by newer versions.
+	Version int `json:"Version,omitempty"`
+
 	sync.RWMutex `json:"-"`
 }
 
@@ -46,11 +58,15 @@ type EPGoCache struct {
 	} `json:"logo,omitempty"`
 
 	// Schedule
+	ScheduleDate    string    `json:"scheduleDate,omitempty"`
 	AirDateTime     time.Time `json:"airDateTime,omitempty"`
 	AudioProperties []string  `json:"audioProperties,omitempty"`
 	Duration        int       `json:"duration,omitempty"`
 	LiveTapeDelay   string    `json:"liveTapeDelay,omitempty"`
 	New             bool      `json:"new,omitempty"`
+	Premiere        bool      `json:"premiere,omitempty"`
+	PremiereFinale  string    `json:"isPremiereOrFinale,omitempty"`
+	Signed          bool      `json:"signed,omitempty"`
 	Ratings         []struct {
 		Body string `json:"body"`
 		Code string `json:"code"`
@@ -100,12 +116,16 @@ type EPGoCache struct {
 			Episode int `json:"episode"`
 			Season  int `json:"season"`
 		} `json:"Gracenote"`
-	} `json:"metadata",omitempty`
+	} `json:"metadata"`
 
 	OriginalAirDate string `json:"originalAirDate,omitempty"`
 	ResourceID      string `json:"resourceID,omitempty"`
 	ShowType        string `json:"showType,omitempty"`
-	Titles          []struct {
+	Movie           *Movie `json:"movie,omitempty"`
+
+	// Schedule and Program: SD sends multipart in either
+	Multipart *Multipart `json:"multipart,omitempty"`
+	Titles    []struct {
 		Title120 string `json:"title120"`
 	} `json:"titles"`
 
@@ -118,13 +138,17 @@ type SDSchedule struct {
 
 	// Schedule
 	Programs []struct {
-		AirDateTime     time.Time `json:"airDateTime"`
-		AudioProperties []string  `json:"audioProperties"`
-		Duration        int       `json:"duration"`
-		LiveTapeDelay   string    `json:"liveTapeDelay"`
-		New             bool      `json:"new"`
-		Md5             string    `json:"md5"`
-		ProgramID       string    `json:"programID"`
+		AirDateTime     time.Time  `json:"airDateTime"`
+		AudioProperties []string   `json:"audioProperties"`
+		Duration        int        `json:"duration"`
+		LiveTapeDelay   string     `json:"liveTapeDelay"`
+		New             bool       `json:"new"`
+		Premiere        bool       `json:"premiere"`
+		PremiereFinale  string     `json:"isPremiereOrFinale"`
+		Signed          bool       `json:"signed"`
+		Multipart       *Multipart `json:"multipart"`
+		Md5             string     `json:"md5"`
+		ProgramID       string     `json:"programID"`
 		Ratings         []struct {
 			Body string `json:"body"`
 			Code string `json:"code"`
@@ -132,4 +156,9 @@ type SDSchedule struct {
 		VideoProperties []string `json:"videoProperties"`
 	} `json:"programs"`
 	StationID string `json:"stationID"`
+	Metadata  struct {
+		StartDate string `json:"startDate"`
+		Md5       string `json:"md5"`
+		Code      int    `json:"code"`
+	} `json:"metadata"`
 }

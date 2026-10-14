@@ -9,28 +9,41 @@ type Programme struct {
 	Start   string   `xml:"start,attr"`
 	Stop    string   `xml:"stop,attr"`
 
-	Title    []Title  `xml:"title"`
-	SubTitle SubTitle `xml:"sub-title"`
+	Title    []Title   `xml:"title"`
+	SubTitle *SubTitle `xml:"sub-title,omitempty"`
 
 	Desc []Desc `xml:"desc"`
 
 	// Credits
-	Credits Credits `xml:"credits,omitempty"`
+	Credits *Credits `xml:"credits,omitempty"`
+	Date    string   `xml:"date,omitempty"`
 
-	Categorys   []Category   `xml:"category,omitempty"`
-	Language    string       `xml:"language,omitempty"`
-	EpisodeNums []EpisodeNum `xml:"episode-num,omitempty"`
+	Categorys []Category `xml:"category,omitempty"`
+	Language  string     `xml:"language,omitempty"`
 
 	//Icon
-	Icon  []Icon `xml:"icon"`
-	Video Video  `xml:"video"`
-	Audio Audio  `xml:"audio"`
-
-	Rating []Rating `xml:"rating,omitempty"`
+	Icon        []Icon       `xml:"icon"`
+	EpisodeNums []EpisodeNum `xml:"episode-num,omitempty"`
+	Video       Video        `xml:"video"`
+	Audio       Audio        `xml:"audio"`
 
 	PreviouslyShown *PreviouslyShown `xml:"previously-shown,omitempty"`
+	Premiere        *Premiere        `xml:"premiere,omitempty"`
 	New             *New             `xml:"new"`
+	Subtitles       []Subtitles      `xml:"subtitles,omitempty"`
 	Live            *Live            `xml:"live"`
+	Rating          []Rating         `xml:"rating,omitempty"`
+	StarRating      []StarRating     `xml:"star-rating,omitempty"`
+	Images          []ProgrammeImage `xml:"image,omitempty"`
+}
+
+// ProgrammeImage : Typed programme artwork (XMLTV DTD).
+type ProgrammeImage struct {
+	Type   string `xml:"type,attr"`
+	Size   string `xml:"size,attr"`
+	Orient string `xml:"orient,attr"`
+	System string `xml:"system,attr"`
+	URL    string `xml:",chardata"`
 }
 
 // ChannelXML : Channel
@@ -70,13 +83,18 @@ type Desc struct {
 	Lang  string `xml:"lang,attr"`
 }
 
-// Credits : Credits
+// Credits : Credits, in the element order of the XMLTV DTD
 type Credits struct {
 	Director  []Director  `xml:"director,omitempty"`
 	Actor     []Actor     `xml:"actor,omitempty"`
+	Writer    []Writer    `xml:"writer,omitempty"`
 	Producer  []Producer  `xml:"producer,omitempty"`
 	Presenter []Presenter `xml:"presenter,omitempty"`
-	Writer    []Writer    `xml:"writer,omitempty"`
+	Guest     []Guest     `xml:"guest,omitempty"`
+}
+
+type Guest struct {
+	Value string `xml:",chardata"`
 }
 
 type Director struct {
@@ -119,7 +137,7 @@ type ProgramIcon struct {
 type Rating struct {
 	System string `xml:"system,attr"`
 	Value  string `xml:"value"`
-	Icon   []Icon `xml:"icon",omitempty`
+	Icon   []Icon `xml:"icon"`
 }
 
 type Video struct {
@@ -137,8 +155,21 @@ type PreviouslyShown struct {
 	Start string `xml:"start,attr,omitempty"`
 }
 
+type Premiere struct {
+	Value string `xml:",chardata"`
+}
+
 type New struct {
 	Value string `xml:",chardata"`
+}
+
+type Subtitles struct {
+	Type string `xml:"type,attr,omitempty"`
+}
+
+type StarRating struct {
+	System string `xml:"system,attr,omitempty"`
+	Value  string `xml:"value"`
 }
 
 type Live struct {

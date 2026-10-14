@@ -22,13 +22,17 @@ type config struct {
 	} `yaml:"Server"`
 
 	Options struct {
-		LiveIcons               bool `yaml:"Live and New icons"`
-		Schedule                int  `yaml:"Schedule Days"`
-		SubtitleIntoDescription bool `yaml:"Subtitle into Description"`
-		Credits                 bool `yaml:"Insert credits tag into XML file"`
-		Images                  struct {
+		LiveIcons                bool `yaml:"Live and New icons"`
+		Schedule                 int  `yaml:"Schedule Days"`
+		SubtitleIntoDescription  bool `yaml:"Subtitle into Description"`
+		SubtitleEpisodeTitleOnly bool `yaml:"Subtitle only from episode titles"`
+		Credits                  bool `yaml:"Insert credits tag into XML file"`
+		Images                   struct {
 			Download bool   `yaml:"Download Images from Schedules Direct"`
+			Typed    bool   `yaml:"Insert typed image tags into XML file"`
 			Path     string `yaml:"Image Path"`
+			Cleanup  int    `yaml:"Delete images unused for days. 0 to keep all"`
+			Local    bool   `yaml:"Image links as local files"`
 			Tmdb     struct {
 				Enable bool   `yaml:"Enable"`
 				ApiKey string `yaml:"Api Key"`

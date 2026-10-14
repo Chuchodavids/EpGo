@@ -5,7 +5,7 @@ import (
 	"encoding/xml"
 	"epgo/tmdb"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -13,7 +13,12 @@ import (
 )
 
 // CreateXMLTV : Create XMLTV file from cache file
-func CreateXMLTV(filename string) (err error) {
+func CreateXMLTV(filename string) error {
+	return createXMLTV(filename, true)
+}
+
+// A provider stop prevents further SD downloads, not publication of usable data.
+func createXMLTV(filename string, downloadSDImages bool) (err error) {
 
 	defer func() {
 		runtime.GC()
@@ -39,10 +44,10 @@ func CreateXMLTV(filename string) (err error) {
 	enc := xml.NewEncoder(buf)
 	enc.Indent("", "  ")
 
-	var he = func(err error) {
-		if err != nil {
-			logger.Error("unable to encode the XML", "error", err)
-			return
+	var encodeErr error
+	var he = func(e error) {
+		if encodeErr == nil {
+			encodeErr = e
 		}
 	}
 
@@ -61,6 +66,11 @@ func CreateXMLTV(filename string) (err error) {
 	if err != nil {
 		logger.Error("unable to open the cache", "error", err)
 		return
+	}
+
+	used, err := Cache.prefetchImagesWithNetwork(downloadSDImages)
+	if err != nil {
+		return err
 	}
 
 	logger.Info("Create XMLTV File", "filename", Config.Files.XMLTV)
@@ -92,11 +102,20 @@ func CreateXMLTV(filename string) (err error) {
 
 	he(enc.EncodeToken(xml.EndElement{Name: xml.Name{Local: "tv"}}))
 	he(enc.Flush())
+	if encodeErr != nil {
+		return encodeErr
+	}
 
-	// write the whole body at once
-	err = os.WriteFile(Config.Files.XMLTV, buf.Bytes(), 0644)
+	err = writeAtomic(Config.Files.XMLTV, 0644, func(w io.Writer) error {
+		_, err := w.Write(buf.Bytes())
+		return err
+	})
 	if err != nil {
-		panic(err)
+		return err
+	}
+	// Do not retire images from the previous guide until publication succeeds.
+	if Config.Options.Images.Download {
+		deleteUnusedImages(used)
 	}
 
 	return
@@ -116,6 +135,12 @@ func getProgram(channel EPGoCache) (p []Programme) {
 	if schedule, ok := Cache.Schedule[channel.StationID]; ok {
 
 		for _, s := range schedule {
+
+			// An unavailable programme without a cached title is a gap, not a
+			// "No EPG Info" event that could overwrite TVHeadend's existing data.
+			if !usableProgram(Cache.Program[s.ProgramID]) {
+				continue
+			}
 
 			var pro Programme
 
@@ -156,13 +181,20 @@ func getProgram(channel EPGoCache) (p []Programme) {
 			}
 
 			// Sub Title
-			pro.SubTitle = Cache.GetSubTitle(s.ProgramID, pro.SubTitle.Value)
+			pro.SubTitle = Cache.GetSubTitle(s.ProgramID, lang)
 
 			// Description
-			pro.Desc = Cache.GetDescs(s.ProgramID, pro.SubTitle.Value)
+			var subTitle string
+			if pro.SubTitle != nil {
+				subTitle = pro.SubTitle.Value
+			}
+			pro.Desc = Cache.GetDescs(s.ProgramID, subTitle)
 
 			// Credits
 			pro.Credits = Cache.GetCredits(s.ProgramID)
+
+			// Date
+			pro.Date = Cache.GetDate(s.ProgramID)
 
 			// Category
 			pro.Categorys = Cache.GetCategory(s.ProgramID)
@@ -171,17 +203,13 @@ func getProgram(channel EPGoCache) (p []Programme) {
 			pro.Language = lang
 
 			// EpisodeNum
-			pro.EpisodeNums = Cache.GetEpisodeNum(s.ProgramID)
+			pro.EpisodeNums = Cache.GetEpisodeNum(s.ProgramID, s.Multipart)
 
 			// Icon
 			var imageURL string
 			icons := Cache.GetIcon(s.ProgramID)
 			if len(icons) != 0 {
-				if Config.Options.Images.Download {
-					imageURL = "http://" + Config.Server.Address + ":" + Config.Server.Port + "/" + s.ProgramID + ".jpg"
-				} else {
-					imageURL = icons[0].Src
-				}
+				imageURL = icons[0].Src
 			}
 
 			if imageURL == "" && Config.Options.Images.Tmdb.Enable {
@@ -190,14 +218,14 @@ func getProgram(channel EPGoCache) (p []Programme) {
 					logger.Error("could not connect to tmdb. check your api key", "error", err)
 				}
 			}
-			pro.Icon = []Icon{
-				{
-					Src: imageURL,
-				},
+			if imageURL != "" {
+				pro.Icon = []Icon{{Src: imageURL}}
 			}
+			pro.Images = Cache.GetImages(s.ProgramID)
 
 			// Rating
 			pro.Rating = Cache.GetRating(s.ProgramID, countryCode)
+			pro.StarRating = Cache.GetStarRating(s.ProgramID)
 
 			// Video
 			for _, v := range s.VideoProperties {
@@ -222,21 +250,27 @@ func getProgram(channel EPGoCache) (p []Programme) {
 					pro.Audio.Stereo = "dolby digital"
 				case "Dolby":
 					pro.Audio.Stereo = "dolby"
+				case "DD":
+					pro.Audio.Stereo = "dolby digital"
+				case "surround":
+					pro.Audio.Stereo = "surround"
 				case "dubbed", "mono":
-					pro.Audio.Stereo = "mono"
-				default:
 					pro.Audio.Stereo = "mono"
 
 				}
 
 			}
 
-			// New / PreviouslyShown
+			// New / Premiere / PreviouslyShown
+			pro.Premiere = GetPremiere(s)
 			if s.New {
 				pro.New = &New{Value: ""}
-			} else {
+			} else if pro.Premiere == nil {
 				pro.PreviouslyShown = Cache.GetPreviouslyShown(s.ProgramID)
 			}
+
+			// Subtitles
+			pro.Subtitles = GetSubtitles(s)
 
 			// Live
 			if s.LiveTapeDelay == "Live" {

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -13,6 +16,9 @@ type SDStatus struct {
 type SD struct {
 	BaseURL string
 	Token   string
+	Client  *http.Client
+	Sleep   func(time.Duration)
+	update  updateSummary
 
 	// SD Request
 	Req struct {
@@ -135,15 +141,16 @@ type SD struct {
 	}
 
 	// SD API Calls
-	Login     func() (err error)
-	Status    func() (err error)
-	Countries func() (err error)
-	Headends  func() (err error)
-	Lineups   func() (err error)
-	Delete    func() (err error)
-	Channels  func() (err error)
-	Schedule  func() (err error)
-	Program   func() (err error)
+	Login       func() (err error)
+	Status      func() (err error)
+	Countries   func() (err error)
+	Headends    func() (err error)
+	Lineups     func() (err error)
+	Delete      func() (err error)
+	Channels    func() (err error)
+	Schedule    func() (err error)
+	ScheduleMD5 func() (err error)
+	Program     func() (err error)
 }
 
 // Station : Station SD API
@@ -225,10 +232,12 @@ type SDProgram struct {
 		} `json:"Gracenote"`
 	} `json:"metadata"`
 
-	OriginalAirDate string `json:"originalAirDate"`
-	ProgramID       string `json:"programID"`
-	ResourceID      string `json:"resourceID"`
-	ShowType        string `json:"showType"`
+	OriginalAirDate string     `json:"originalAirDate"`
+	ProgramID       string     `json:"programID"`
+	ResourceID      string     `json:"resourceID"`
+	ShowType        string     `json:"showType"`
+	Movie           *Movie     `json:"movie"`
+	Multipart       *Multipart `json:"multiPart"`
 	Titles          []struct {
 		Title120 string `json:"title120"`
 	} `json:"titles"`
@@ -236,7 +245,7 @@ type SDProgram struct {
 
 // SDMetadata : Schedules Direct meta data
 type SDMetadata struct {
-	Data      []Data `json:"data",required`
+	Data      []Data `json:"data"`
 	ProgramID string `json:"programID"`
 }
 
@@ -302,4 +311,40 @@ type SDError struct {
 		ServerID string `json:"serverID"`
 	} `json:"data"`
 	ProgramID string `json:"programID"`
+}
+
+// Movie : movie details of an SD program
+type Movie struct {
+	Year          sdText `json:"year,omitempty"`
+	QualityRating []struct {
+		RatingsBody sdText `json:"ratingsBody"`
+		Rating      sdText `json:"rating"`
+		MaxRating   sdText `json:"maxRating"`
+	} `json:"qualityRating,omitempty"`
+}
+
+// Multipart : part number of a program that is split into several parts
+type Multipart struct {
+	PartNumber int `json:"partNumber"`
+	TotalParts int `json:"totalParts"`
+}
+
+// sdText accepts a JSON string or number. SD documents these optional values
+// as strings; a type change must not fail the whole program batch.
+type sdText string
+
+func (s *sdText) UnmarshalJSON(b []byte) error {
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	switch v := v.(type) {
+	case string:
+		*s = sdText(v)
+	case float64:
+		*s = sdText(strconv.FormatFloat(v, 'f', -1, 64))
+	default:
+		*s = ""
+	}
+	return nil
 }
