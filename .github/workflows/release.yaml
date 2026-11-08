@@ -55,7 +55,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: epgo-${{ matrix.os_arch.goos }}-${{ matrix.os_arch.goarch }}
-          path: ${{ env.archive_name }}
+          path: ${{ steps.set_names.outputs.archive_name }}
 
   create_release: # Renamed job for clarity and dependency
     needs: build # Make sure build job completes first
