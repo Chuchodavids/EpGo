@@ -65,42 +65,42 @@ func (e *Entry) manageChannels(sd *SD) (err error) {
 	}
 
 	entry.headline()
-	var channelNames []string
-	var existing map[string]bool
-
-	for _, station := range sd.Resp.Lineup.Stations {
-		channelNames = append(channelNames, station.Name)
-	}
-
-	sort.Strings(channelNames)
 
 	Config.GetChannels()
 
-	existing = make(map[string]bool)
+	existing := make(map[string]bool)
 	for _, id := range Config.ChannelIDs {
 		existing[id] = true
 	}
 
-	// Prepare items for promptui
-	var promptItems []map[string]interface{}
-	for _, cName := range channelNames {
-		for _, station := range sd.Resp.Lineup.Stations {
-			if cName == station.Name {
-				status := "-"
-				if existing[station.StationID] {
-					status = "+"
-				}
-				promptItems = append(promptItems, map[string]interface{}{
-					"Name":     station.Name,
-					"ID":       station.StationID,
-					"Display":  fmt.Sprintf("[%s] %s [%s] %v", status, station.Name, station.StationID, station.BroadcastLanguage), //Pre-calculate Display
-					"Status":   status,
-					"Lineup":   entry.Lineup,
-					"Language": station.BroadcastLanguage, // Store language for searching
-				})
-				break
-			}
+	// One row per station, sorted by name. Stations that share a name are
+	// ordered by ID so each one keeps its own row.
+	stations := make([]Station, len(sd.Resp.Lineup.Stations))
+	copy(stations, sd.Resp.Lineup.Stations)
+	sort.SliceStable(stations, func(i, j int) bool {
+		if stations[i].Name != stations[j].Name {
+			return stations[i].Name < stations[j].Name
 		}
+		return stations[i].StationID < stations[j].StationID
+	})
+
+	// The select all and deselect all rows come first, then the channels.
+	promptItems := []*channelItem{
+		{Action: channelActionSelectAll, Display: fmt.Sprintf("[+] Select all channels (%d)", len(stations))},
+		{Action: channelActionDeselectAll, Display: "[-] Deselect all channels"},
+	}
+	firstChannel := len(promptItems)
+
+	for _, station := range stations {
+		item := &channelItem{
+			Name:     station.Name,
+			ID:       station.StationID,
+			Lineup:   entry.Lineup,
+			Language: station.BroadcastLanguage,
+			Selected: existing[station.StationID],
+		}
+		item.updateDisplay()
+		promptItems = append(promptItems, item)
 	}
 
 	templates := &promptui.SelectTemplates{
@@ -110,9 +110,10 @@ func (e *Entry) manageChannels(sd *SD) (err error) {
 		Selected: "{{ .Display | yellow }}",
 		Details: `
 --------- Channel Details ----------
-{{ "Name:" | faint }}	{{ .Name }}
+{{ if .Action }}{{ "Applies to every channel in this lineup" | faint }}
+{{ else }}{{ "Name:" | faint }}	{{ .Name }}
 {{ "ID:" | faint }}	{{ .ID }}
-`,
+{{ end }}`,
 	}
 
 	prompt := promptui.Select{
@@ -120,15 +121,19 @@ func (e *Entry) manageChannels(sd *SD) (err error) {
 		Items:     promptItems,
 		Size:      20,
 		Templates: templates,
-		CursorPos: selection,
+		CursorPos: firstChannel,
 	}
 
-	// custom searcher function based on channel name, station id and language
+	// Search by channel name. The select all and deselect all rows act on the
+	// whole lineup, not on the search results, so they are hidden while a
+	// search term is entered.
 	prompt.Searcher = func(input string, index int) bool {
 		item := promptItems[index]
-		name := item["Name"].(string)
+		if item.Action != "" {
+			return input == ""
+		}
 
-		return caseInsensitiveContains(name, input)
+		return caseInsensitiveContains(item.Name, input)
 	}
 
 	for {
@@ -145,34 +150,73 @@ func (e *Entry) manageChannels(sd *SD) (err error) {
 			return err
 		}
 
-		// Toggle selection status
 		item := promptItems[index]
-		if item["Status"] == "+" {
-			item["Status"] = "-"
-		} else {
-			item["Status"] = "+"
+
+		switch item.Action {
+		case channelActionSelectAll:
+			setAllChannels(promptItems, true)
+		case channelActionDeselectAll:
+			setAllChannels(promptItems, false)
+		default:
+			item.Selected = !item.Selected
+			item.updateDisplay()
 		}
 
-		// Update the Display field *after* toggling the status
-		item["Display"] = fmt.Sprintf("[%s] %s [%s] %v", item["Status"], item["Name"], item["ID"], item["Language"])
-
-		// Update promptItems to reflect the change
-		promptItems[index] = item
-		prompt.Items = promptItems // Not strictly necessary, but good for consistency
 		prompt.CursorPos = index
 	}
+
 	// Collect selected channels and add/remove accordingly.
 	for _, item := range promptItems {
-		if item["Status"] == "+" {
-			ch := channel{Name: item["Name"].(string), ID: item["ID"].(string), Lineup: item["Lineup"].(string)}
+		if item.Action != "" {
+			continue
+		}
+
+		ch := channel{Name: item.Name, ID: item.ID, Lineup: item.Lineup}
+		if item.Selected {
 			Config.AddChannel(&ch)
 		} else {
-			ch := channel{Name: item["Name"].(string), ID: item["ID"].(string), Lineup: item["Lineup"].(string)}
 			Config.RemoveChannel(&ch)
 		}
 	}
 
 	return
+}
+
+// Picker rows that act on every channel of the lineup instead of one.
+const (
+	channelActionSelectAll   = "select-all"
+	channelActionDeselectAll = "deselect-all"
+)
+
+// channelItem is one row of the channel picker: a station of the lineup,
+// or a select all / deselect all row when Action is set.
+type channelItem struct {
+	Name     string
+	ID       string
+	Lineup   string
+	Language []string
+	Selected bool
+	Action   string
+	Display  string
+}
+
+func (c *channelItem) updateDisplay() {
+	status := "-"
+	if c.Selected {
+		status = "+"
+	}
+	c.Display = fmt.Sprintf("[%s] %s [%s] %v", status, c.Name, c.ID, c.Language)
+}
+
+// setAllChannels selects or deselects every channel row of the picker.
+func setAllChannels(items []*channelItem, selected bool) {
+	for _, item := range items {
+		if item.Action != "" {
+			continue
+		}
+		item.Selected = selected
+		item.updateDisplay()
+	}
 }
 
 // Helper function for case-insensitive contains
