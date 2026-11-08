@@ -3,34 +3,41 @@ package main
 import "encoding/xml"
 
 // Programme : Programme
+//
+// Field order follows the XMLTV DTD element order, because encoding/xml
+// writes fields in declaration order. Optional elements are pointers or
+// slices so they are left out entirely when empty.
 type Programme struct {
 	XMLName xml.Name `xml:"programme"`
 	Channel string   `xml:"channel,attr"`
 	Start   string   `xml:"start,attr"`
 	Stop    string   `xml:"stop,attr"`
 
-	Title    []Title  `xml:"title"`
-	SubTitle SubTitle `xml:"sub-title"`
+	Title    []Title   `xml:"title"`
+	SubTitle *SubTitle `xml:"sub-title,omitempty"`
 
 	Desc []Desc `xml:"desc"`
 
 	// Credits
-	Credits Credits `xml:"credits,omitempty"`
+	Credits *Credits `xml:"credits,omitempty"`
 
-	Categorys   []Category   `xml:"category,omitempty"`
-	Language    string       `xml:"language,omitempty"`
-	EpisodeNums []EpisodeNum `xml:"episode-num,omitempty"`
+	Categorys []Category `xml:"category,omitempty"`
+	Language  string     `xml:"language,omitempty"`
 
 	//Icon
-	Icon  []Icon `xml:"icon"`
-	Video Video  `xml:"video"`
-	Audio Audio  `xml:"audio"`
+	Icon []Icon `xml:"icon,omitempty"`
 
-	Rating []Rating `xml:"rating,omitempty"`
+	EpisodeNums []EpisodeNum `xml:"episode-num,omitempty"`
+
+	Video *Video `xml:"video,omitempty"`
+	Audio *Audio `xml:"audio,omitempty"`
 
 	PreviouslyShown *PreviouslyShown `xml:"previously-shown,omitempty"`
-	New             *New             `xml:"new"`
-	Live            *Live            `xml:"live"`
+	New             *New             `xml:"new,omitempty"`
+	// Live is not part of the XMLTV DTD, but some clients read it.
+	Live *Live `xml:"live,omitempty"`
+
+	Rating []Rating `xml:"rating,omitempty"`
 }
 
 // ChannelXML : Channel
@@ -48,8 +55,8 @@ type DisplayName struct {
 // Icon : Channel icon
 type Icon struct {
 	Src    string `xml:"src,attr"`
-	Height int    `xml:"height,attr"`
-	Width  int    `xml:"width,attr"`
+	Height int    `xml:"height,attr,omitempty"`
+	Width  int    `xml:"width,attr,omitempty"`
 }
 
 // Title : Title
@@ -119,7 +126,7 @@ type ProgramIcon struct {
 type Rating struct {
 	System string `xml:"system,attr"`
 	Value  string `xml:"value"`
-	Icon   []Icon `xml:"icon",omitempty`
+	Icon   []Icon `xml:"icon,omitempty"`
 }
 
 type Video struct {

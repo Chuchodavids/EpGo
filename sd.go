@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -79,7 +80,7 @@ func (sd *SD) Init() (err error) {
 
 		if sd.Resp.Status.Code == 3000 || sd.Resp.Status.Code == 4009 {
 			logger.Error("Schedule Direct issue", "status_message", sd.Resp.Status.Message, "status_code", sd.Resp.Status.Code)
-			return fmt.Errorf("schdule Direct is down: %w", err)
+			return fmt.Errorf("schedules direct is unavailable: %s (code %d)", sd.Resp.Status.Message, sd.Resp.Status.Code)
 		}
 
 		logger.Info("", "Expiration", sd.Resp.Status.Account.Expires)
@@ -220,7 +221,7 @@ func (sd *SD) Connect() (err error) {
 			return err
 		}
 		if sd.Resp.Login.Code == 4009 {
-			return fmt.Errorf(sd.Resp.Login.Message)
+			return errors.New(sd.Resp.Login.Message)
 		}
 		t := time.Unix(sd.Resp.Login.TokenExpires, 0)
 		logger.Info("", "Token Expires", t)

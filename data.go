@@ -56,7 +56,13 @@ func (sd *SD) Update(filename string) (err error) {
 		return err
 	}
 
-	sd.GetData()
+	// If the download fails, stop here: the previous XMLTV file and the
+	// program cache are left untouched instead of being replaced by an
+	// empty guide.
+	err = sd.GetData()
+	if err != nil {
+		return err
+	}
 
 	runtime.GC()
 
@@ -83,7 +89,7 @@ func (sd *SD) Update(filename string) (err error) {
 }
 
 // GetData : Get data from Schedules Direct
-func (sd *SD) GetData() {
+func (sd *SD) GetData() error {
 
 	var err error
 	var wg sync.WaitGroup
@@ -91,13 +97,16 @@ func (sd *SD) GetData() {
 
 	err = Cache.Open()
 	if err != nil {
-		logger.Error("unable to open the cache", "error", err)
-		return
+		return fmt.Errorf("unable to open the cache: %w", err)
 	}
 	Cache.Init()
 
 	// Channel list
 	Cache.Channel = make(map[string]EPGoCache)
+
+	// The schedule is always downloaded in full. Start from an empty one so a
+	// retry after a failed run cannot append duplicate airings.
+	Cache.Schedule = make(map[string][]EPGoCache)
 
 	var lineup []string
 
@@ -110,9 +119,15 @@ func (sd *SD) GetData() {
 		sd.Req.Parameter = fmt.Sprintf("/%s", id)
 		sd.Req.Type = "GET"
 
-		sd.Lineups()
+		err = sd.Lineups()
+		if err != nil {
+			return fmt.Errorf("unable to download lineup %s: %w", id, err)
+		}
 
-		Cache.AddStations(&sd.Resp.Body, id)
+		err = Cache.AddStations(&sd.Resp.Body, id)
+		if err != nil {
+			return err
+		}
 
 	}
 
@@ -140,20 +155,18 @@ func (sd *SD) GetData() {
 
 			sd.Req.Data, err = json.Marshal(channels)
 			if err != nil {
-				logger.Error("unable to marshal the JSON", "error", err)
-				return
+				return fmt.Errorf("unable to marshal the schedule request: %w", err)
 			}
 
-			sd.Schedule()
+			err = sd.Schedule()
+			if err != nil {
+				return fmt.Errorf("unable to download the schedule: %w", err)
+			}
 
-			wg.Add(1)
-			go func() {
-
-				Cache.AddSchedule(&sd.Resp.Body)
-
-				wg.Done()
-
-			}()
+			err = Cache.AddSchedule(&sd.Resp.Body)
+			if err != nil {
+				return err
+			}
 
 			count = 0
 			channels = make([]interface{}, 0)
@@ -162,7 +175,13 @@ func (sd *SD) GetData() {
 
 	}
 
-	wg.Wait()
+	var airings int
+	for _, s := range Cache.Schedule {
+		airings += len(s)
+	}
+	if len(Config.Station) != 0 && airings == 0 {
+		return fmt.Errorf("schedules direct returned no schedule for any of the %d configured channels", len(Config.Station))
+	}
 
 	// Program and Metadata
 	count = 0
@@ -173,7 +192,7 @@ func (sd *SD) GetData() {
 	var allIDs = Cache.GetAllProgramIDs()
 	var programs = make([]interface{}, 0)
 
-	logger.Info("Download Program Informations", "new", len(programIds), "cached", len(allIDs)-len(programIds))
+	logger.Info("Download Program Informations", "new_or_updated", len(programIds), "cached", len(allIDs)-len(programIds))
 
 	for _, t := range types {
 
@@ -203,8 +222,7 @@ func (sd *SD) GetData() {
 
 				sd.Req.Data, err = json.Marshal(programs)
 				if err != nil {
-					logger.Error("unable to marshal the JSON", "error", err)
-					return
+					return fmt.Errorf("unable to marshal the %s request: %w", t, err)
 				}
 
 				err := sd.Program()
@@ -235,7 +253,8 @@ func (sd *SD) GetData() {
 
 	err = Cache.Save()
 	if err != nil {
-		logger.Error("unable to save the JSON", "error", err)
-		return
+		return fmt.Errorf("unable to save the cache: %w", err)
 	}
+
+	return nil
 }

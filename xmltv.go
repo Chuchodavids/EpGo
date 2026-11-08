@@ -96,20 +96,63 @@ func CreateXMLTV(filename string) (err error) {
 	// write the whole body at once
 	err = os.WriteFile(Config.Files.XMLTV, buf.Bytes(), 0644)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("unable to write the XMLTV file: %w", err)
 	}
 
 	return
 }
 
 // Channel infos
-func (channel *EPGoCache) getLogo() (icon Icon) {
+func (channel *EPGoCache) getLogo() *Icon {
 
-	icon.Src = channel.Logo.URL
-	icon.Height = channel.Logo.Height
-	icon.Width = channel.Logo.Width
+	if channel.Logo.URL == "" {
+		return nil
+	}
 
-	return
+	return &Icon{
+		Src:    channel.Logo.URL,
+		Height: channel.Logo.Height,
+		Width:  channel.Logo.Width,
+	}
+}
+
+// programType returns the two-letter Schedules Direct program type prefix
+// (EP, SH, MV, SP) of a program ID.
+func programType(programID string) string {
+	if len(programID) < 2 {
+		return ""
+	}
+	return programID[:2]
+}
+
+// audioRank orders XMLTV <stereo> values from least to most capable.
+var audioRank = map[string]int{"mono": 1, "stereo": 2, "dolby": 3, "dolby digital": 4}
+
+// audioStereo maps Schedules Direct audio properties to an XMLTV <stereo>
+// value. Properties that say nothing about the channel layout (cc, SAP,
+// subtitled, ...) are ignored, and the most capable format wins whatever the
+// order. It returns "" when no property describes the layout.
+func audioStereo(props []string) string {
+	var best string
+	for _, a := range props {
+		var v string
+		switch a {
+		case "stereo", "dvs":
+			v = "stereo"
+		case "DD 5.1", "Atmos":
+			v = "dolby digital"
+		case "Dolby":
+			v = "dolby"
+		case "dubbed", "mono":
+			v = "mono"
+		default:
+			continue
+		}
+		if audioRank[v] > audioRank[best] {
+			best = v
+		}
+	}
+	return best
 }
 
 func getProgram(channel EPGoCache) (p []Programme) {
@@ -156,10 +199,14 @@ func getProgram(channel EPGoCache) (p []Programme) {
 			}
 
 			// Sub Title
-			pro.SubTitle = Cache.GetSubTitle(s.ProgramID, pro.SubTitle.Value)
+			pro.SubTitle = Cache.GetSubTitle(s.ProgramID, lang)
 
 			// Description
-			pro.Desc = Cache.GetDescs(s.ProgramID, pro.SubTitle.Value)
+			var subTitle string
+			if pro.SubTitle != nil {
+				subTitle = pro.SubTitle.Value
+			}
+			pro.Desc = Cache.GetDescs(s.ProgramID, subTitle)
 
 			// Credits
 			pro.Credits = Cache.GetCredits(s.ProgramID)
@@ -185,15 +232,13 @@ func getProgram(channel EPGoCache) (p []Programme) {
 			}
 
 			if imageURL == "" && Config.Options.Images.Tmdb.Enable {
-				imageURL, err = tmdb.SearchItem(logger, pro.Title[0].Value, pro.EpisodeNums[0].Value[0:2], Config.Options.Images.Tmdb.ApiKey, Config.Files.TmdbCacheFile)
+				imageURL, err = tmdb.SearchItem(logger, pro.Title[0].Value, programType(s.ProgramID), Config.Options.Images.Tmdb.ApiKey, Config.Files.TmdbCacheFile)
 				if err != nil {
 					logger.Error("could not connect to tmdb. check your api key", "error", err)
 				}
 			}
-			pro.Icon = []Icon{
-				{
-					Src: imageURL,
-				},
+			if imageURL != "" {
+				pro.Icon = []Icon{{Src: imageURL}}
 			}
 
 			// Rating
@@ -205,30 +250,15 @@ func getProgram(channel EPGoCache) (p []Programme) {
 				switch strings.ToLower(v) {
 
 				case "hdtv", "sdtv", "uhdtv", "3d":
-					pro.Video.Quality = strings.ToUpper(v)
+					pro.Video = &Video{Quality: strings.ToUpper(v)}
 
 				}
 
 			}
 
 			// Audio
-			for _, a := range s.AudioProperties {
-
-				switch a {
-
-				case "stereo", "dvs":
-					pro.Audio.Stereo = "stereo"
-				case "DD 5.1", "Atmos":
-					pro.Audio.Stereo = "dolby digital"
-				case "Dolby":
-					pro.Audio.Stereo = "dolby"
-				case "dubbed", "mono":
-					pro.Audio.Stereo = "mono"
-				default:
-					pro.Audio.Stereo = "mono"
-
-				}
-
+			if stereo := audioStereo(s.AudioProperties); stereo != "" {
+				pro.Audio = &Audio{Stereo: stereo}
 			}
 
 			// New / PreviouslyShown

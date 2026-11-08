@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -41,7 +42,7 @@ func (c *cache) Remove() {
 	}
 }
 
-func (c *cache) AddStations(data *[]byte, lineup string) {
+func (c *cache) AddStations(data *[]byte, lineup string) error {
 
 	c.Lock()
 	defer c.Unlock()
@@ -51,8 +52,7 @@ func (c *cache) AddStations(data *[]byte, lineup string) {
 
 	err := json.Unmarshal(*data, &sdData)
 	if err != nil {
-		logger.Error("unable to unmarshal the JSON", "error", err)
-		return
+		return fmt.Errorf("unable to unmarshal the stations of lineup %s: %w", lineup, err)
 	}
 
 	var channelIDs = Config.GetChannelList(lineup)
@@ -84,9 +84,10 @@ func (c *cache) AddStations(data *[]byte, lineup string) {
 
 	}
 
+	return nil
 }
 
-func (c *cache) AddSchedule(data *[]byte) {
+func (c *cache) AddSchedule(data *[]byte) error {
 
 	c.Lock()
 	defer c.Unlock()
@@ -96,8 +97,7 @@ func (c *cache) AddSchedule(data *[]byte) {
 
 	err := json.Unmarshal(*data, &sdData)
 	if err != nil {
-		logger.Error("unable to unmarshal the JSON", "error", err)
-		return
+		return fmt.Errorf("unable to unmarshal the schedule: %w", err)
 	}
 
 	for _, sd := range sdData {
@@ -124,6 +124,7 @@ func (c *cache) AddSchedule(data *[]byte) {
 
 	}
 
+	return nil
 }
 
 func (c *cache) AddProgram(gzip *[]byte, wg *sync.WaitGroup) {
@@ -152,6 +153,7 @@ func (c *cache) AddProgram(gzip *[]byte, wg *sync.WaitGroup) {
 
 	for _, sd := range sdData {
 
+		epgoCache.Md5 = sd.Md5
 		epgoCache.Descriptions = sd.Descriptions
 		epgoCache.EpisodeTitle150 = sd.EpisodeTitle150
 		epgoCache.Genres = sd.Genres
@@ -248,16 +250,26 @@ func (c *cache) GetAllProgramIDs() (programIDs []string) {
 	return
 }
 
+// GetRequiredProgramIDs returns the scheduled program IDs that are missing
+// from the cache, or whose cached copy is out of date: the schedule carries
+// the md5 of the current program data, so a different md5 means Schedules
+// Direct has updated the program (e.g. a "TBA" episode title was filled in).
 func (c *cache) GetRequiredProgramIDs() (programIDs []string) {
 
-	var allProgramIDs = c.GetAllProgramIDs()
+	seen := make(map[string]struct{})
 
-	for _, id := range allProgramIDs {
+	for _, channel := range c.Schedule {
 
-		if _, ok := c.Program[id]; !ok {
+		for _, schedule := range channel {
 
-			if ContainsString(programIDs, id) == -1 {
-				programIDs = append(programIDs, id)
+			if _, ok := seen[schedule.ProgramID]; ok {
+				continue
+			}
+			seen[schedule.ProgramID] = struct{}{}
+
+			p, ok := c.Program[schedule.ProgramID]
+			if !ok || (schedule.Md5 != "" && p.Md5 != schedule.Md5) {
+				programIDs = append(programIDs, schedule.ProgramID)
 			}
 
 		}
@@ -323,7 +335,7 @@ func (c *cache) GetIcon(id string) (i []Icon) {
 				bestScore = currentScore
 
 				uri := iconData.URI
-				if uri[0:7] != "http://" && uri[0:8] != "https://" {
+				if !strings.HasPrefix(uri, "http://") && !strings.HasPrefix(uri, "https://") {
 					uri = fmt.Sprintf("https://json.schedulesdirect.org/20141201/image/%s?token=%s", uri, Token)
 				}
 
@@ -433,21 +445,21 @@ func (c *cache) GetTitle(id, lang string) (t []Title) {
 	return
 }
 
-func (c *cache) GetSubTitle(id, lang string) (s SubTitle) {
+func (c *cache) GetSubTitle(id, lang string) (s *SubTitle) {
 
 	if p, ok := c.Program[id]; ok {
 
 		if len(p.EpisodeTitle150) != 0 {
 
-			s.Value = p.EpisodeTitle150
-			s.Lang = lang
+			s = &SubTitle{Value: p.EpisodeTitle150, Lang: lang}
 
 		} else {
 
 			for _, d := range p.Descriptions.Description100 {
 
-				s.Value = d.Description
-				s.Lang = d.DescriptionLanguage
+				if len(d.Description) != 0 {
+					s = &SubTitle{Value: d.Description, Lang: d.DescriptionLanguage}
+				}
 
 			}
 
@@ -492,7 +504,9 @@ func (c *cache) GetDescs(id, subTitle string) (de []Desc) {
 	return
 }
 
-func (c *cache) GetCredits(id string) (cr Credits) {
+func (c *cache) GetCredits(id string) *Credits {
+
+	var cr Credits
 
 	if Config.Options.Credits {
 
@@ -535,7 +549,11 @@ func (c *cache) GetCredits(id string) (cr Credits) {
 
 	}
 
-	return
+	if len(cr.Director)+len(cr.Actor)+len(cr.Producer)+len(cr.Presenter)+len(cr.Writer) == 0 {
+		return nil
+	}
+
+	return &cr
 }
 
 func (c *cache) GetCategory(id string) (ca []Category) {
