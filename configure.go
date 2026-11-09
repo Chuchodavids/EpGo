@@ -116,7 +116,10 @@ func Configure(filename string) (err error) {
 			sd.Status()
 
 		case 5:
-			sd.Update(filename)
+			err = sd.Update(filename)
+			if err != nil {
+				logger.Error("unable to create the XMLTV file", "error", err)
+			}
 
 		}
 
@@ -270,7 +273,7 @@ func (c *config) InitConfig() {
 	c.Options.SubtitleIntoDescription = false
 	c.Options.Credits = false
 	Config.Options.Rating.Guidelines = true
-	Config.Options.Rating.Countries = []string{"USA", "CHE", "DE"}
+	Config.Options.Rating.Countries = []string{"USA", "CHE", "DEU"}
 	Config.Options.Rating.CountryCodeAsSystem = false
 	Config.Options.Rating.MaxEntries = 1
 	Config.Options.LiveIcons = false

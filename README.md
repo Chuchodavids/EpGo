@@ -234,7 +234,7 @@ Some clients only display the description and ignore the subtitle tag from the X
 
 ```XML
 <?xml version="1.0" encoding="UTF-8"?>
-<programme channel="epgo.67203.schedulesdirect.org" start="20200509134500 +0000" stop="20200509141000 +0000">
+<programme channel="67203.schedulesdirect.org" start="20200509134500 +0000" stop="20200509141000 +0000">
    <title lang="de">Two and a Half Men</title>
    <sub-title lang="de">Ich arbeite für Caligula</sub-title>
    <desc lang="de">[Ich arbeite für Caligula]
@@ -282,7 +282,7 @@ Insert credits tag into XML file: false
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<programme channel="epgo.67203.schedulesdirect.org" start="20200509134500 +0000" stop="20200509141000 +0000">
+<programme channel="67203.schedulesdirect.org" start="20200509134500 +0000" stop="20200509141000 +0000">
    <title lang="de">Two and a Half Men</title>
    <sub-title lang="de">Ich arbeite für Caligula</sub-title>
    ...
@@ -315,7 +315,7 @@ Rating:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<programme channel="epgo.67203.schedulesdirect.org" start="20200509134500 +0000" stop="20200509141000 +0000">
+<programme channel="67203.schedulesdirect.org" start="20200509134500 +0000" stop="20200509141000 +0000">
   <title lang="de">Two and a Half Men</title>
   <sub-title lang="de">Ich arbeite für Caligula</sub-title>
   <language>de</language>
@@ -331,7 +331,7 @@ Rating:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<programme channel="epgo.67203.schedulesdirect.org" start="20200509134500 +0000" stop="20200509141000 +0000">
+<programme channel="67203.schedulesdirect.org" start="20200509134500 +0000" stop="20200509141000 +0000">
   <title lang="de">Two and a Half Men</title>
   <sub-title lang="de">Ich arbeite für Caligula</sub-title>
   <language>de</language>
@@ -429,7 +429,7 @@ Example:
 Each channel in the XMLTV output includes an `lcn` attribute for subchannel auto-matching in media servers like Plex and Jellyfin. The LCN is populated from the Schedules Direct lineup map — for OTA channels it uses `atscMajor.atscMinor`, and for cable/satellite it uses the channel number string.
 
 ```xml
-<channel id="epgo.42635.schedulesdirect.org">
+<channel id="42635.schedulesdirect.org">
   <display-name>WGBO-DT</display-name>
   <display-name>66.1</display-name>
   <lcn>66.1</lcn>

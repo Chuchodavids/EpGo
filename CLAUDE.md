@@ -17,6 +17,9 @@ GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o epgo_linux_amd64
 # Tidy dependencies
 go mod tidy
 
+# Run tests
+go test ./...
+
 # Run (interactive config)
 ./epgo -configure myconfig.yaml
 
@@ -24,7 +27,7 @@ go mod tidy
 ./epgo -config myconfig.yaml
 ```
 
-There are no tests in this project.
+Tests live next to the code (`*_test.go`). Tests in package `main` drive the code through its globals (`Config`, `Cache`, `logger`), and `data_test.go` fakes the Schedules Direct API with `httptest`.
 
 ## Architecture
 
@@ -64,7 +67,7 @@ The `channel` struct is dual-purpose: serialized to YAML for the config file, an
 
 ### XMLTV generation (`xmltv.go`)
 
-Streams XML directly to file using `xml.NewEncoder`. Channels are written first (from `Cache.Channel`), then programmes (from `Cache.Schedule` joined with `Cache.Program` and `Cache.Metadata`). Channel IDs follow the format `epgo.<stationID>.schedulesdirect.org`.
+Streams XML directly to file using `xml.NewEncoder`. Channels are written first (from `Cache.Channel`), then programmes (from `Cache.Schedule` joined with `Cache.Program` and `Cache.Metadata`). Channel IDs follow the format `<stationID>.schedulesdirect.org`. `Programme` fields are declared in XMLTV DTD element order, because `encoding/xml` writes them in declaration order, and optional elements are pointers so they're omitted when empty.
 
 The `dd_progid` episode number is formatted as `EP01938443.3118` — the first 10 characters of the program ID followed by a dot and the remaining digits.
 

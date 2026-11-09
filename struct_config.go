@@ -53,6 +53,6 @@ type channel struct {
 	ID          string        `yaml:"ID" json:"stationID" xml:"id,attr"`
 	Lineup      string        `yaml:"Lineup" json:"-" xml:"-"`
 	Date        []string      `yaml:"-" json:"date"`
+	Icon        *Icon         `yaml:"-" json:"-" xml:"icon,omitempty"`
 	Lcn         string        `yaml:"-" json:"-" xml:"lcn,omitempty"`
-	Icon        Icon          `yaml:"-" json:"-" xml:"icon"`
 }
