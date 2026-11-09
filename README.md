@@ -124,7 +124,7 @@ Remove Lineup from the Schedules Direct account.
 
 4. Manage Channels:  
 Selection of the channels to be used.
-You can now choose to add all channels from a lineup at once or select them individually.
+Press Enter on a channel to select or deselect it, or use the **Select all channels** and **Deselect all channels** rows at the top of the list to change every channel of the lineup at once. Press `/` to search by name and Ctrl+C to save.
 All selected channels are merged into one XML file when the XMLTV file is created.
 When using all channels from all lineups it is recommended to create a separate epgo configuration file for each lineup.  
 5. Create XMLTV File [MY_CONFIG_FILE.xml]:  
